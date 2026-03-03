@@ -162,7 +162,10 @@ function parseNewMessage(text, lastAsked) {
   if (sizeM) found.groupSize = parseInt(sizeM[1]);
   if (/^(just me|solo|1)$/.test(t)) found.groupSize = 1;
   if (t.includes("two of us") || t === "couple" || t === "2") found.groupSize = found.groupSize || 2;
-  if (!found.groupSize && (lastAsked === "groupSize" || lastAsked === "remaining") && /^\d+$/.test(t)) found.groupSize = parseInt(t);
+  if (!found.groupSize && (lastAsked === "groupSize" || lastAsked === "remaining")) {
+    const numM = t.match(/(\d+)/);
+    if (numM && parseInt(numM[1]) >= 1 && parseInt(numM[1]) <= 50) found.groupSize = parseInt(numM[1]);
+  }
 
   // Group type
   const types = [[/boys?\s*trip|guys?\s*trip|bachelor/,"boys"],[/girls?\s*trip|bachelorette|ladies/,"girls"],[/family|kids|children/,"family"],[/couple|honeymoon|romantic|anniversary/,"couple"],[/\bsolo\b|just me|alone/,"solo"],[/business|corporate|team/,"business"]];
@@ -186,14 +189,24 @@ function parseNewMessage(text, lastAsked) {
   if (t.includes("next week")) found.dates = found.dates || "Next week";
   if (t.includes("next month")) found.dates = found.dates || "Next month";
 
-  // Budget
-  const bp = [/\$\s*([\d,]+)\s*k/i, /\$\s*([\d,]+)/, /([\d,]+)\s*k\b/i, /([\d,]+)\s*grand/i];
+  // Budget — be very forgiving
+  // First: try explicit patterns from any message
+  const bp = [/\$\s*([\d,]+)\s*k/i, /\$\s*([\d,]+)/, /([\d,]+)\s*k\b/i, /([\d,]+)\s*grand/i, /([\d,]+)\s*(budget|total|spend|max)/i];
   for (const pat of bp) {
     const m = t.match(pat);
-    if (m) { let v = parseInt(m[1].replace(/,/g,"")); if ((t.includes("k")||v<100)&&v<1000) v*=1000; if (v>=500){found.totalBudget=v;break;} }
+    if (m) { let v = parseInt(m[1].replace(/,/g,"")); if (t.includes("k")&&v<1000) v*=1000; if (v>=200){found.totalBudget=v;break;} }
   }
-  if (!found.totalBudget && (lastAsked==="budget"||lastAsked==="remaining") && t.match(/^\$?\s*[\d,]+\s*k?$/)) {
-    let v = parseInt(t.replace(/[$,\s]/g,"")); if(t.includes("k")&&v<100) v*=1000; if(v>=500) found.totalBudget=v;
+  // If we just asked about budget, accept almost any number
+  if (!found.totalBudget && (lastAsked==="budget"||lastAsked==="remaining")) {
+    // Extract any number from the message
+    const numM = t.match(/([\d,]+)/);
+    if (numM) {
+      let v = parseInt(numM[1].replace(/,/g,""));
+      if (t.includes("k") && v < 1000) v *= 1000;
+      // Smart inference: if they say "10" or "15" they probably mean thousands
+      if (v > 0 && v <= 50) v *= 1000;
+      if (v >= 200) found.totalBudget = v;
+    }
   }
 
   // Interests
@@ -878,7 +891,7 @@ function Msgs() {
 }
 
 /* ═══ TAB 5: PROFILE ═══ */
-function Prof() {
+function Prof({ onSwitchToHost }) {
   const mi=[{l:"Personal Information",i:"👤"},{l:"Payment Methods",i:"💳"},{l:"Saved Experiences",i:"♥"},{l:"Past Trips",i:"🗺"},{l:"Notifications",i:"🔔"},{l:"Privacy & Security",i:"🔒"},{l:"Help & Support",i:"💬"}];
   return (
     <div style={{ height:"100%",overflowY:"auto",background:C.bg }}>
@@ -890,7 +903,19 @@ function Prof() {
           {[["3","Trips"],["12","Saved"],["7","Reviews"]].map(([n,l],i)=><div key={i} style={{ textAlign:"center" }}><div style={{ fontFamily:"var(--fh)",fontSize:20,fontWeight:700,color:C.text }}>{n}</div><div style={{ fontFamily:"var(--fb)",fontSize:11,color:C.textSec }}>{l}</div></div>)}
         </div>
       </div>
-      <div style={{ padding:"8px 20px" }}>{mi.map((item,i)=>(
+      <div style={{ padding:"16px 20px" }}>
+        <button onClick={onSwitchToHost} style={{ width:"100%",padding:"16px 20px",borderRadius:14,cursor:"pointer",background:"linear-gradient(135deg, #1a1a1a 0%, #333 100%)",border:"none",display:"flex",alignItems:"center",gap:14 }}>
+          <div style={{ width:42,height:42,borderRadius:10,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          </div>
+          <div style={{ flex:1,textAlign:"left" }}>
+            <div style={{ fontFamily:"var(--fb)",fontSize:15,fontWeight:600,color:"#fff" }}>Switch to Host Mode</div>
+            <div style={{ fontFamily:"var(--fb)",fontSize:12,color:"rgba(255,255,255,0.55)",marginTop:2 }}>Manage listings, bookings & calendar</div>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+      <div style={{ padding:"0 20px" }}>{mi.map((item,i)=>(
         <div key={i} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer" }}>
           <div style={{ display:"flex",alignItems:"center",gap:14 }}><span style={{ fontSize:16,width:24,textAlign:"center" }}>{item.i}</span><span style={{ fontFamily:"var(--fb)",fontSize:14,color:C.text }}>{item.l}</span></div>
           <span style={{ color:C.textTer,fontSize:16 }}>›</span>
@@ -901,46 +926,243 @@ function Prof() {
   );
 }
 
+/* ═══ HOST DASHBOARD ═══ */
+const HOST_LISTINGS = [
+  { id:"h1",title:"Private Yacht Sunset Cruise",loc:"Miami, Florida",price:1800,rating:4.96,reviews:67,img:"https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?w=400&q=80",status:"active",nextBooking:"Mar 8",bookingsThisMonth:12,revenue:21600 },
+  { id:"h2",title:"Deep Sea Fishing Charter",loc:"Miami, Florida",price:2200,rating:4.92,reviews:54,img:"https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=400&q=80",status:"active",nextBooking:"Mar 10",bookingsThisMonth:8,revenue:17600 },
+  { id:"h3",title:"Biscayne Bay Jet Ski Tour",loc:"Miami, Florida",price:320,rating:4.88,reviews:93,img:"https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=400&q=80",status:"paused",nextBooking:"—",bookingsThisMonth:0,revenue:0 },
+];
+const HOST_BOOKINGS = [
+  { id:"b1",listing:"Private Yacht Sunset Cruise",guest:"James & Co.",guests:8,date:"Mar 8",time:"4:00 PM",total:14400,status:"confirmed",avatar:"JC" },
+  { id:"b2",listing:"Deep Sea Fishing Charter",guest:"Mike Rivera",guests:4,date:"Mar 10",time:"6:00 AM",total:8800,status:"confirmed",avatar:"MR" },
+  { id:"b3",listing:"Private Yacht Sunset Cruise",guest:"Sarah Kim",guests:6,date:"Mar 12",time:"4:00 PM",total:10800,status:"pending",avatar:"SK" },
+  { id:"b4",listing:"Deep Sea Fishing Charter",guest:"Tom & Friends",guests:6,date:"Mar 15",time:"6:00 AM",total:13200,status:"confirmed",avatar:"TF" },
+  { id:"b5",listing:"Private Yacht Sunset Cruise",guest:"Elena V.",guests:2,date:"Mar 18",time:"4:00 PM",total:3600,status:"pending",avatar:"EV" },
+];
+const HOST_MSGS = [
+  { guest:"James & Co.",avatar:"JC",msg:"Can we bring our own champagne on the yacht?",time:"20m ago",unread:true },
+  { guest:"Sarah Kim",avatar:"SK",msg:"Is there a possibility to extend by 1 hour?",time:"2h ago",unread:true },
+  { guest:"Mike Rivera",avatar:"MR",msg:"Perfect, see you Saturday morning!",time:"5h ago",unread:false },
+  { guest:"Tom & Friends",avatar:"TF",msg:"Any gear we should bring for deep sea?",time:"1d ago",unread:false },
+];
+
+function HostDashboard({ onBack }) {
+  const [ht, setHt] = useState("reservations");
+  const htabs = [
+    { id:"reservations",label:"Bookings",icon:a=><svg width="20" height="20" viewBox="0 0 24 24" fill={a?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> },
+    { id:"calendar",label:"Calendar",icon:a=><svg width="20" height="20" viewBox="0 0 24 24" fill={a?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+    { id:"listings",label:"Listings",icon:a=><svg width="20" height="20" viewBox="0 0 24 24" fill={a?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> },
+    { id:"messages",label:"Messages",icon:a=><svg width="20" height="20" viewBox="0 0 24 24" fill={a?"currentColor":"none"} stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg> },
+  ];
+  return (
+    <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:"#111",boxShadow:"0 0 60px rgba(0,0,0,0.3)",overflow:"hidden" }}>
+      <div style={{ padding:"14px 20px",background:"#111",borderBottom:"1px solid #222",display:"flex",alignItems:"center",gap:12 }}>
+        <button onClick={onBack} style={{ background:"none",border:"none",cursor:"pointer",padding:4,display:"flex" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <div style={{ flex:1 }}><div style={{ fontFamily:"var(--fh)",fontSize:17,fontWeight:700,color:"#fff" }}>Host Dashboard</div></div>
+        <div style={{ width:32,height:32,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:13,fontWeight:700,color:"#fff" }}>S</div>
+      </div>
+      <div style={{ flex:1,overflow:"hidden" }}>
+        {ht==="reservations"&&<HReservations />}
+        {ht==="calendar"&&<HCalendar />}
+        {ht==="listings"&&<HListings />}
+        {ht==="messages"&&<HMsgs />}
+      </div>
+      <div style={{ display:"flex",justifyContent:"space-around",alignItems:"center",height:64,borderTop:"1px solid #222",background:"#111",flexShrink:0,paddingBottom:4 }}>
+        {htabs.map(t=>(
+          <button key={t.id} onClick={()=>setHt(t.id)} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",cursor:"pointer",padding:"6px 12px",color:ht===t.id?C.accent:"#555",position:"relative" }}>
+            {t.icon(ht===t.id)}<span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600 }}>{t.label}</span>
+            {t.id==="messages"&&HOST_MSGS.some(m=>m.unread)&&<div style={{ position:"absolute",top:2,right:6,width:7,height:7,borderRadius:"50%",background:C.accent }} />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HReservations() {
+  const confirmed=HOST_BOOKINGS.filter(b=>b.status==="confirmed");
+  const pending=HOST_BOOKINGS.filter(b=>b.status==="pending");
+  const rev=confirmed.reduce((s,b)=>s+b.total,0);
+  return (
+    <div style={{ height:"100%",overflowY:"auto",background:"#111" }}>
+      <div style={{ display:"flex",gap:10,padding:"16px 20px" }}>
+        {[{l:"Revenue",v:fmt(rev)},{l:"Confirmed",v:confirmed.length},{l:"Pending",v:pending.length}].map((s,i)=>(
+          <div key={i} style={{ flex:1,padding:"14px 10px",background:"#1a1a1a",borderRadius:12,border:"1px solid #222",textAlign:"center" }}>
+            <div style={{ fontFamily:"var(--fh)",fontSize:18,fontWeight:700,color:"#fff" }}>{s.v}</div>
+            <div style={{ fontFamily:"var(--fb)",fontSize:10,color:"#666",marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      {pending.length>0&&<div style={{ padding:"0 20px 12px" }}>
+        <div style={{ fontFamily:"var(--fb)",fontSize:11,fontWeight:600,color:C.accent,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10 }}>Pending approval</div>
+        {pending.map(b=>(
+          <div key={b.id} style={{ background:"#1a1a1a",borderRadius:14,border:"1px solid #333",padding:14,marginBottom:10 }}>
+            <div style={{ display:"flex",gap:12,alignItems:"center",marginBottom:12 }}>
+              <div style={{ width:40,height:40,borderRadius:"50%",background:"#222",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:13,fontWeight:700,color:"#888" }}>{b.avatar}</div>
+              <div style={{ flex:1 }}><div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:"#fff" }}>{b.guest}</div><div style={{ fontFamily:"var(--fb)",fontSize:12,color:"#666" }}>{b.listing}</div></div>
+              <div style={{ textAlign:"right" }}><div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:700,color:"#fff" }}>{fmt(b.total)}</div><div style={{ fontFamily:"var(--fb)",fontSize:11,color:"#666" }}>{b.guests} guests</div></div>
+            </div>
+            <div style={{ fontFamily:"var(--fb)",fontSize:12,color:"#888",marginBottom:12 }}>{b.date} at {b.time}</div>
+            <div style={{ display:"flex",gap:8 }}>
+              <button style={{ flex:1,padding:"10px",borderRadius:10,border:"none",background:C.accent,color:"#fff",fontFamily:"var(--fb)",fontSize:13,fontWeight:600,cursor:"pointer" }}>Accept</button>
+              <button style={{ flex:1,padding:"10px",borderRadius:10,border:"1px solid #333",background:"transparent",color:"#888",fontFamily:"var(--fb)",fontSize:13,fontWeight:600,cursor:"pointer" }}>Decline</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+      <div style={{ padding:"0 20px 20px" }}>
+        <div style={{ fontFamily:"var(--fb)",fontSize:11,fontWeight:600,color:"#666",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10 }}>Upcoming confirmed</div>
+        {confirmed.map(b=>(
+          <div key={b.id} style={{ display:"flex",gap:12,alignItems:"center",padding:"14px 0",borderBottom:"1px solid #1a1a1a" }}>
+            <div style={{ width:40,height:40,borderRadius:"50%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:13,fontWeight:700,color:"#666" }}>{b.avatar}</div>
+            <div style={{ flex:1 }}><div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:"#fff" }}>{b.guest}</div><div style={{ fontFamily:"var(--fb)",fontSize:12,color:"#666" }}>{b.listing} · {b.guests} guests</div></div>
+            <div style={{ textAlign:"right" }}><div style={{ fontFamily:"var(--fb)",fontSize:13,fontWeight:600,color:"#fff" }}>{b.date}</div><div style={{ fontFamily:"var(--fb)",fontSize:11,color:"#666" }}>{b.time}</div></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HCalendar() {
+  const [sel, setSel] = useState(null);
+  const today=new Date(); const yr=today.getFullYear(); const mo=today.getMonth();
+  const dim=new Date(yr,mo+1,0).getDate(); const fd=new Date(yr,mo,1).getDay();
+  const mName=today.toLocaleString("default",{month:"long",year:"numeric"});
+  const booked={8:2,10:1,12:1,15:1,18:1}; const blocked=[3,4,24,25];
+  const cells=[]; for(let i=0;i<fd;i++)cells.push(null); for(let d=1;d<=dim;d++)cells.push(d);
+  return (
+    <div style={{ height:"100%",overflowY:"auto",background:"#111" }}>
+      <div style={{ padding:"20px" }}>
+        <div style={{ fontFamily:"var(--fh)",fontSize:20,fontWeight:700,color:"#fff",marginBottom:16 }}>{mName}</div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:8 }}>
+          {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d=><div key={d} style={{ textAlign:"center",fontFamily:"var(--fb)",fontSize:10,fontWeight:600,color:"#555",padding:"4px 0" }}>{d}</div>)}
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4 }}>
+          {cells.map((d,i)=>{
+            if(!d) return <div key={i}/>;
+            const isToday=d===today.getDate(); const bc=booked[d]||0; const bl=blocked.includes(d); const isSel=sel===d;
+            return (
+              <button key={i} onClick={()=>setSel(isSel?null:d)} style={{ aspectRatio:"1",borderRadius:10,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,border:isSel?`2px solid ${C.accent}`:isToday?"2px solid #333":"1px solid #1a1a1a",background:bl?"#1a1a1a":isSel?"rgba(198,120,92,0.15)":"#111",opacity:bl?0.4:1 }}>
+                <span style={{ fontFamily:"var(--fb)",fontSize:13,fontWeight:isToday?700:500,color:isSel?C.accent:isToday?"#fff":"#999" }}>{d}</span>
+                {bc>0&&<div style={{ display:"flex",gap:2 }}>{Array.from({length:Math.min(bc,3)}).map((_,j)=><div key={j} style={{ width:4,height:4,borderRadius:"50%",background:C.accent }}/>)}</div>}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display:"flex",gap:16,marginTop:16,paddingTop:16,borderTop:"1px solid #1a1a1a" }}>
+          {[{c:C.accent,l:"Booked"},{c:"#333",l:"Blocked"}].map((l,i)=><div key={i} style={{ display:"flex",alignItems:"center",gap:6 }}><div style={{ width:8,height:8,borderRadius:"50%",background:l.c }}/><span style={{ fontFamily:"var(--fb)",fontSize:11,color:"#666" }}>{l.l}</span></div>)}
+        </div>
+        {sel&&booked[sel]&&(
+          <div style={{ marginTop:16,padding:16,background:"#1a1a1a",borderRadius:14,border:"1px solid #222" }}>
+            <div style={{ fontFamily:"var(--fb)",fontSize:13,fontWeight:600,color:"#fff",marginBottom:10 }}>March {sel} — {booked[sel]} booking{booked[sel]>1?"s":""}</div>
+            {HOST_BOOKINGS.filter(b=>parseInt(b.date.split(" ")[1])===sel).map(b=>(
+              <div key={b.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:"1px solid #222" }}>
+                <div style={{ width:32,height:32,borderRadius:"50%",background:"#222",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:11,fontWeight:700,color:"#666" }}>{b.avatar}</div>
+                <div style={{ flex:1 }}><div style={{ fontFamily:"var(--fb)",fontSize:13,fontWeight:600,color:"#fff" }}>{b.guest}</div><div style={{ fontFamily:"var(--fb)",fontSize:11,color:"#666" }}>{b.time} · {b.guests} guests</div></div>
+                <span style={{ padding:"3px 8px",borderRadius:8,fontSize:10,fontFamily:"var(--fb)",fontWeight:600,background:b.status==="confirmed"?"rgba(5,150,105,0.15)":"rgba(198,120,92,0.15)",color:b.status==="confirmed"?"#059669":C.accent }}>{b.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <button style={{ width:"100%",marginTop:16,padding:"12px",borderRadius:10,border:"1px solid #333",background:"transparent",color:"#888",fontFamily:"var(--fb)",fontSize:13,fontWeight:600,cursor:"pointer" }}>Block dates</button>
+      </div>
+    </div>
+  );
+}
+
+function HListings() {
+  return (
+    <div style={{ height:"100%",overflowY:"auto",background:"#111" }}>
+      <div style={{ padding:"16px 20px" }}>
+        {HOST_LISTINGS.map(l=>(
+          <div key={l.id} style={{ background:"#1a1a1a",borderRadius:14,border:"1px solid #222",overflow:"hidden",marginBottom:14 }}>
+            <div style={{ position:"relative",height:140 }}>
+              <img src={l.img} alt="" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+              <span style={{ position:"absolute",top:10,right:10,padding:"4px 10px",borderRadius:12,fontFamily:"var(--fb)",fontSize:11,fontWeight:600,background:l.status==="active"?"rgba(5,150,105,0.9)":"rgba(120,120,120,0.9)",color:"#fff" }}>{l.status==="active"?"Active":"Paused"}</span>
+            </div>
+            <div style={{ padding:14 }}>
+              <div style={{ fontFamily:"var(--fb)",fontSize:15,fontWeight:600,color:"#fff" }}>{l.title}</div>
+              <div style={{ fontFamily:"var(--fb)",fontSize:12,color:"#666",marginTop:4 }}>{l.loc}</div>
+              <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:8 }}>{ic.star()}<span style={{ fontFamily:"var(--fb)",fontSize:12,fontWeight:600,color:"#fff" }}>{l.rating}</span><span style={{ fontFamily:"var(--fb)",fontSize:12,color:"#666" }}>({l.reviews}) · {fmt(l.price)}/pp</span></div>
+              <div style={{ display:"flex",gap:12,marginTop:12,paddingTop:12,borderTop:"1px solid #222" }}>
+                {[{l:"Bookings",v:l.bookingsThisMonth},{l:"Revenue",v:l.revenue>0?fmt(l.revenue):"—"},{l:"Next",v:l.nextBooking}].map((s,i)=>(
+                  <div key={i} style={{ flex:1 }}><div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:700,color:"#fff" }}>{s.v}</div><div style={{ fontFamily:"var(--fb)",fontSize:10,color:"#555" }}>{s.l}</div></div>
+                ))}
+              </div>
+              <div style={{ display:"flex",gap:8,marginTop:12 }}>
+                <button style={{ flex:1,padding:"9px",borderRadius:8,border:"none",background:"#222",color:"#fff",fontFamily:"var(--fb)",fontSize:12,fontWeight:600,cursor:"pointer" }}>Edit</button>
+                <button style={{ flex:1,padding:"9px",borderRadius:8,border:"none",background:"#222",color:l.status==="active"?"#888":C.accent,fontFamily:"var(--fb)",fontSize:12,fontWeight:600,cursor:"pointer" }}>{l.status==="active"?"Pause":"Activate"}</button>
+              </div>
+            </div>
+          </div>
+        ))}
+        <button style={{ width:"100%",padding:"14px",borderRadius:12,border:"2px dashed #333",background:"transparent",color:"#666",fontFamily:"var(--fb)",fontSize:14,fontWeight:600,cursor:"pointer",marginTop:4 }}>+ Add new listing</button>
+      </div>
+    </div>
+  );
+}
+
+function HMsgs() {
+  return (
+    <div style={{ height:"100%",overflowY:"auto",background:"#111" }}>
+      <div style={{ padding:"0 20px" }}>
+        {HOST_MSGS.map((m,i)=>(
+          <div key={i} style={{ display:"flex",gap:14,padding:"16px 0",borderBottom:"1px solid #1a1a1a",cursor:"pointer" }}>
+            <div style={{ width:44,height:44,borderRadius:"50%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:14,fontWeight:700,color:"#666",flexShrink:0 }}>{m.avatar}</div>
+            <div style={{ flex:1,minWidth:0 }}>
+              <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}><span style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:"#fff" }}>{m.guest}</span><span style={{ fontFamily:"var(--fb)",fontSize:11,color:"#555" }}>{m.time}</span></div>
+              <div style={{ fontFamily:"var(--fb)",fontSize:13,color:m.unread?"#ccc":"#555",fontWeight:m.unread?500:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{m.msg}</div>
+            </div>
+            {m.unread&&<div style={{ width:8,height:8,borderRadius:"50%",background:C.accent,marginTop:6,flexShrink:0 }}/>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ═══ APP ═══ */
 export default function App() {
+  const [mode, setMode] = useState("guest");
   const [tab, setTab] = useState("chat");
   const [trip, setTrip] = useState([]);
   const [tripDays, setTripDays] = useState({});
-  const [userInfo, setUserInfo] = useState({ cities:[], interests:[], dates:null, groupSize:null, groupType:null, totalBudget:null, numDays:null, pace:null, startDate:null });
+  const [userInfo, setUserInfo] = useState({ cities:[],interests:[],dates:null,groupSize:null,groupType:null,totalBudget:null,numDays:null,pace:null });
   const [aiRecs, setAiRecs] = useState([]);
   const [aiItinerary, setAiItinerary] = useState(null);
 
   const add = e => { if (!trip.some(t => t.id === e.id)) setTrip(p => [...p, e]); };
   const rm = id => { setTrip(p => p.filter(t => t.id !== id)); setTripDays(p => { const n={...p}; delete n[id]; return n; }); };
 
-  const tabs = [
-    { id:"chat",l:"Chat",i:ic.chat },
-    { id:"ideas",l:"Ideas",i:ic.ideas },
-    { id:"trip",l:"Trip",i:ic.trip },
-    { id:"messages",l:"Messages",i:ic.msg },
-    { id:"profile",l:"Profile",i:ic.prof },
-  ];
+  if (mode === "host") return (
+    <>
+      <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#000;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
+      <HostDashboard onBack={() => setMode("guest")} />
+    </>
+  );
 
+  const tabs = [{id:"chat",l:"Chat",i:ic.chat},{id:"ideas",l:"Ideas",i:ic.ideas},{id:"trip",l:"Trip",i:ic.trip},{id:"messages",l:"Messages",i:ic.msg},{id:"profile",l:"Profile",i:ic.prof}];
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#E8E4DE;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
-      <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,position:"relative",boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
+      <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
         <div style={{ flex:1,overflow:"hidden" }}>
           {tab==="chat"&&<AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} setAiRecs={setAiRecs} setAiItinerary={setAiItinerary} setTab={setTab} />}
           {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} trip={trip} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
           {tab==="trip"&&<TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} aiItinerary={aiItinerary} />}
           {tab==="messages"&&<Msgs />}
-          {tab==="profile"&&<Prof />}
+          {tab==="profile"&&<Prof onSwitchToHost={()=>setMode("host")} />}
         </div>
         <div style={{ display:"flex",justifyContent:"space-around",alignItems:"center",height:64,borderTop:`1px solid ${C.border}`,background:C.surface,flexShrink:0,paddingBottom:4 }}>
           {tabs.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",cursor:"pointer",padding:"6px 12px",position:"relative",color:tab===t.id?C.accent:C.textTer }}>
-              {t.i(tab===t.id)}
-              <span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600 }}>{t.l}</span>
+              {t.i(tab===t.id)}<span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600 }}>{t.l}</span>
               {t.id==="trip"&&trip.length>0&&<div style={{ position:"absolute",top:0,right:2,width:16,height:16,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",fontFamily:"var(--fb)" }}>{trip.length}</div>}
               {t.id==="ideas"&&aiRecs.length>0&&<div style={{ position:"absolute",top:0,right:2,width:16,height:16,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",fontFamily:"var(--fb)" }}>{aiRecs.length}</div>}
-              {t.id==="messages"&&<div style={{ position:"absolute",top:2,right:8,width:7,height:7,borderRadius:"50%",background:C.accent }} />}
+              {t.id==="messages"&&<div style={{ position:"absolute",top:2,right:8,width:7,height:7,borderRadius:"50%",background:C.accent }}/>}
             </button>
           ))}
         </div>
