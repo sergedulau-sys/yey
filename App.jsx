@@ -147,262 +147,164 @@ async function callClaude(history) {
 }
 
 /* ═══ LOCAL CONVERSATION ENGINE ═══ */
-function localConverse(history) {
-  const userMsgs = history.filter(m => m.role === "user").map(m => m.content.toLowerCase());
-  const botMsgs = history.filter(m => m.role === "assistant").map(m => m.content.toLowerCase());
-  const lastMsg = userMsgs[userMsgs.length - 1] || "";
-  const lastBot = botMsgs[botMsgs.length - 1] || "";
-  const allText = userMsgs.join(" ");
+function parseNewMessage(text, lastAsked) {
+  const t = text.toLowerCase().trim();
+  const found = {};
 
-  // Track what we know
-  const state = { cities: [], groupSize: null, groupType: null, numDays: null, dates: null, totalBudget: null, interests: [], pace: null };
+  // Cities
+  const cityMap = { miami:"miami","south beach":"miami",wynwood:"miami",brickell:"miami",tokyo:"tokyo",japan:"tokyo",italy:"amalfi",amalfi:"amalfi",bali:"bali",greece:"santorini",santorini:"santorini",napa:"napa",california:"napa",france:"epernay",paris:"epernay",scotland:"standrews" };
+  const cities = [];
+  Object.entries(cityMap).forEach(([k,v]) => { if (t.includes(k) && !cities.includes(v)) cities.push(v); });
+  if (cities.length) found.cities = cities;
 
-  // Parse cities from ALL messages
-  const cityMap = { miami:"miami","south beach":"miami",wynwood:"miami",brickell:"miami",tokyo:"tokyo",japan:"tokyo",italy:"amalfi",amalfi:"amalfi",bali:"bali",greece:"santorini",santorini:"santorini",napa:"napa",california:"napa","san francisco":"napa",france:"epernay",paris:"epernay",scotland:"standrews","st andrews":"standrews" };
-  Object.entries(cityMap).forEach(([k,v]) => { if (allText.includes(k) && !state.cities.includes(v)) state.cities.push(v); });
+  // Group size
+  const sizeM = t.match(/(\d+)\s*(people|persons|of us|guys|girls|friends|guests|pax|boys|men|women)/);
+  if (sizeM) found.groupSize = parseInt(sizeM[1]);
+  if (/^(just me|solo|1)$/.test(t)) found.groupSize = 1;
+  if (t.includes("two of us") || t === "couple" || t === "2") found.groupSize = found.groupSize || 2;
+  if (!found.groupSize && (lastAsked === "groupSize" || lastAsked === "remaining") && /^\d+$/.test(t)) found.groupSize = parseInt(t);
 
-  // Parse group size — handle bare numbers contextually
-  const sizeM = allText.match(/(\d+)\s*(people|persons|of us|guys|girls|friends|guests|pax|group)/);
-  if (sizeM) state.groupSize = parseInt(sizeM[1]);
-  if (allText.includes("just me") || allText.includes("solo") || allText.includes("alone")) state.groupSize = 1;
-  if (allText.includes("two of us") || allText.match(/\bcouple\b/)) state.groupSize = 2;
-  // If last bot asked about group size and user replied with just a number
-  if (!state.groupSize && lastBot.includes("how many") && lastMsg.match(/^\s*\d+\s*$/)) {
-    state.groupSize = parseInt(lastMsg.trim());
+  // Group type
+  const types = [[/boys?\s*trip|guys?\s*trip|bachelor/,"boys"],[/girls?\s*trip|bachelorette|ladies/,"girls"],[/family|kids|children/,"family"],[/couple|honeymoon|romantic|anniversary/,"couple"],[/\bsolo\b|just me|alone/,"solo"],[/business|corporate|team/,"business"]];
+  for (const [re,type] of types) { if (t.match(re)) { found.groupType = type; break; } }
+  if (!found.groupType && lastAsked === "groupType") {
+    const m = {boys:"boys",guys:"boys",bachelor:"boys",girls:"girls",ladies:"girls",family:"family",couple:"couple",solo:"solo",business:"business"};
+    for (const [k,v] of Object.entries(m)) { if (t.includes(k)) { found.groupType = v; break; } }
   }
 
-  // Parse group type
-  const typePatterns = [
-    [/boys?\s*trip|guys?\s*trip|bachelor/, "boys"],
-    [/girls?\s*trip|bachelorette|ladies/, "girls"],
-    [/family|kids|children/, "family"],
-    [/couple|honeymoon|romantic|anniversary/, "couple"],
-    [/solo|just me|alone|by myself/, "solo"],
-    [/business|corporate|team\s*build/, "business"],
-  ];
-  for (const [re, type] of typePatterns) { if (allText.match(re)) { state.groupType = type; break; } }
-  // Contextual: if bot asked about trip type and user gives a short answer
-  if (!state.groupType && lastBot.includes("what kind of trip")) {
-    if (lastMsg.includes("boy") || lastMsg.includes("guy") || lastMsg.includes("bachelor")) state.groupType = "boys";
-    else if (lastMsg.includes("girl") || lastMsg.includes("ladies") || lastMsg.includes("bachelorette")) state.groupType = "girls";
-    else if (lastMsg.includes("family") || lastMsg.includes("kid")) state.groupType = "family";
-    else if (lastMsg.includes("couple") || lastMsg.includes("romantic")) state.groupType = "couple";
-    else if (lastMsg.includes("solo") || lastMsg.includes("alone")) state.groupType = "solo";
-    else if (lastMsg.includes("business") || lastMsg.includes("corporate")) state.groupType = "business";
-  }
+  // Days
+  const dayM = t.match(/(\d+)\s*(days?|nights?)/);
+  if (dayM) found.numDays = parseInt(dayM[1]);
+  if (t.includes("long weekend")) found.numDays = found.numDays || 3;
+  else if (t.includes("weekend")) found.numDays = found.numDays || 2;
+  if (t.match(/\ba week\b/) && !t.includes("weekend")) found.numDays = 7;
 
-  // Parse days
-  const dayM = allText.match(/(\d+)\s*(days?|nights?)/);
-  if (dayM) state.numDays = parseInt(dayM[1]);
-  if (allText.includes("long weekend")) state.numDays = state.numDays || 3;
-  else if (allText.includes("weekend")) state.numDays = state.numDays || 2;
-  if (allText.match(/\ba week\b/) && !allText.includes("weekend")) state.numDays = 7;
-
-  // Parse dates
+  // Dates
   const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-  months.forEach(m => { const re = new RegExp(m + "\\s*(\\d{1,2})?"); const match = allText.match(re); if (match) state.dates = `${m.charAt(0).toUpperCase()+m.slice(1)}${match[1] ? " "+match[1] : ""}`; });
-  if (allText.includes("this weekend")) state.dates = state.dates || "This weekend";
-  if (allText.includes("next week")) state.dates = state.dates || "Next week";
-  if (allText.includes("next month")) state.dates = state.dates || "Next month";
+  months.forEach(m => { const re = new RegExp(m + "\\s*(\\d{1,2})?"); const match = t.match(re); if (match) found.dates = `${m.charAt(0).toUpperCase()+m.slice(1)}${match[1] ? " "+match[1] : ""}`; });
+  if (t.includes("this weekend")) found.dates = found.dates || "This weekend";
+  if (t.includes("next week")) found.dates = found.dates || "Next week";
+  if (t.includes("next month")) found.dates = found.dates || "Next month";
 
-  // Parse budget — flexible patterns
-  // "$10k", "$10,000", "10k budget", "budget 10k", "10000 total", "$15k", "15 grand", bare "$5000"
-  const budgetPatterns = [
-    /\$\s*([\d,]+)\s*k\b/i,
-    /\$\s*([\d,]+)/,
-    /([\d,]+)\s*k\s*(budget|total|spend|max|for\s*(the|everything))/i,
-    /(budget|total|spend)[^\d]*([\d,]+)\s*k?/i,
-    /([\d,]+)\s*(budget|total|spend|max)/i,
-    /([\d,]+)\s*grand/i,
-  ];
-  for (const pat of budgetPatterns) {
-    const m = allText.match(pat);
-    if (m) {
-      const raw = (m[1] || m[2]).replace(/,/g, "");
-      let val = parseInt(raw);
-      if (allText.match(new RegExp(raw + "\\s*k", "i")) || (val <= 100 && allText.includes("k"))) val *= 1000;
-      if (val > 100) { state.totalBudget = val; break; }
-    }
+  // Budget
+  const bp = [/\$\s*([\d,]+)\s*k/i, /\$\s*([\d,]+)/, /([\d,]+)\s*k\b/i, /([\d,]+)\s*grand/i];
+  for (const pat of bp) {
+    const m = t.match(pat);
+    if (m) { let v = parseInt(m[1].replace(/,/g,"")); if ((t.includes("k")||v<100)&&v<1000) v*=1000; if (v>=500){found.totalBudget=v;break;} }
   }
-  // Contextual: if bot asked about budget and user replied with just a number/amount
-  if (!state.totalBudget && lastBot.includes("budget")) {
-    const bm = lastMsg.match(/\$?\s*([\d,]+)\s*k?/);
-    if (bm) {
-      let val = parseInt(bm[1].replace(/,/g, ""));
-      if (lastMsg.includes("k") && val < 100) val *= 1000;
-      if (val >= 100) state.totalBudget = val;
-    }
+  if (!found.totalBudget && (lastAsked==="budget"||lastAsked==="remaining") && t.match(/^\$?\s*[\d,]+\s*k?$/)) {
+    let v = parseInt(t.replace(/[$,\s]/g,"")); if(t.includes("k")&&v<100) v*=1000; if(v>=500) found.totalBudget=v;
   }
 
-  // Parse interests
-  const intMap = {
-    food:["food","eat","restaurant","dining","culinary","chef","sushi","dinner","lunch","brunch","foodie"],
-    water:["boat","yacht","sailing","jet ski","water","ocean","cruise","catamaran","fishing","snorkel","surf","swim"],
-    adventure:["adventure","thrill","explore","airboat","helicopter","safari","extreme","adrenaline"],
-    culture:["art","culture","museum","history","gallery","street art","mural"],
-    wellness:["spa","wellness","relax","massage","meditation","yoga","retreat"],
-    sport:["golf","sport","tennis","fitness"],
-    nightlife:["nightlife","bar","club","cocktail","drink","party","drinks"],
-    wine:["wine","champagne","tasting","vineyard","winery"],
-    nature:["nature","wildlife","everglades","park","hike","outdoor"],
-  };
-  Object.entries(intMap).forEach(([cat,words]) => { words.forEach(w => { if (allText.includes(w) && !state.interests.includes(cat)) state.interests.push(cat); }); });
-  // "Surprise me" = give them a broad mix
-  if (allText.includes("surprise me") || allText.includes("everything") || allText.includes("mix of")) {
-    ["food","water","adventure","culture"].forEach(i => { if (!state.interests.includes(i)) state.interests.push(i); });
+  // Interests
+  const intMap = {food:["food","eat","restaurant","dining","culinary","chef","sushi","dinner","lunch","brunch","foodie"],water:["boat","yacht","sailing","jet ski","water","ocean","cruise","catamaran","fishing","snorkel","surf","swim"],adventure:["adventure","thrill","explore","airboat","helicopter","safari","extreme","adrenaline"],culture:["art","culture","museum","history","gallery","street art","mural"],wellness:["spa","wellness","relax","massage","meditation","yoga","retreat"],sport:["golf","sport","tennis","fitness"],nightlife:["nightlife","bar","club","cocktail","drink","party","drinks"],wine:["wine","champagne","tasting","vineyard","winery"],nature:["nature","wildlife","everglades","park","hike","outdoor"]};
+  const interests = [];
+  Object.entries(intMap).forEach(([cat,words]) => { words.forEach(w => { if(t.includes(w)&&!interests.includes(cat)) interests.push(cat); }); });
+  if (t.includes("surprise me")||t.includes("everything")||t.includes("mix")) ["food","water","adventure","culture"].forEach(i=>{if(!interests.includes(i))interests.push(i);});
+  if (interests.length) found.interests = interests;
+
+  // Pace
+  if (t.match(/packed|busy|nonstop|non-stop|action/)) found.pace = "packed";
+  if (t.match(/relaxed|chill|easy|laid.?back/)) found.pace = "relaxed";
+
+  return found;
+}
+
+function getMissing(s) {
+  const m = [];
+  if (!s.cities?.length) m.push("destination");
+  if (!s.dates && !s.numDays) m.push("dates");
+  if (!s.groupSize) m.push("groupSize");
+  if (!s.groupType) m.push("groupType");
+  if (!s.totalBudget) m.push("budget");
+  if (!s.interests?.length) m.push("interests");
+  return m;
+}
+
+function canBuildItinerary(s) {
+  return s.cities?.length && (s.numDays || s.dates) && s.groupSize && s.interests?.length;
+}
+
+function buildResponse(state, isFirst) {
+  const missing = getMissing(state);
+  const cityName = state.cities?.[0] ? state.cities[0].charAt(0).toUpperCase() + state.cities[0].slice(1) : null;
+
+  // No destination yet
+  if (!cityName) {
+    if (isFirst) return { text: "Welcome to Élevé. Where are you headed?", asked: "destination" };
+    return { text: "Where are you headed?", asked: "destination" };
   }
 
-  // Parse pace
-  if (allText.includes("packed") || allText.includes("busy") || allText.includes("action") || allText.includes("non-stop") || allText.includes("nonstop")) state.pace = "packed";
-  if (allText.includes("relaxed") || allText.includes("chill") || allText.includes("easy") || allText.includes("laid back") || allText.includes("laid-back")) state.pace = "relaxed";
-
-  // Build INFO tag
-  const infoObj = {};
-  if (state.cities.length) infoObj.cities = state.cities;
-  if (state.groupSize) infoObj.groupSize = state.groupSize;
-  if (state.groupType) infoObj.groupType = state.groupType;
-  if (state.numDays) infoObj.numDays = state.numDays;
-  if (state.dates) infoObj.dates = state.dates;
-  if (state.totalBudget) infoObj.totalBudget = state.totalBudget;
-  if (state.interests.length) infoObj.interests = state.interests;
-  if (state.pace) infoObj.pace = state.pace;
-  const infoTag = Object.keys(infoObj).length ? `|||INFO:${JSON.stringify(infoObj)}|||` : "";
-
-  // What's still missing
-  const missing = [];
-  if (!state.cities.length) missing.push("destination");
-  if (!state.dates && !state.numDays) missing.push("dates");
-  if (!state.groupSize) missing.push("groupSize");
-  if (!state.groupType) missing.push("groupType");
-  if (!state.totalBudget) missing.push("budget");
-  if (!state.interests.length) missing.push("interests");
-
-  // ─── RESPONSES ───
-
-  // Initial greeting
-  if (userMsgs.length <= 1 && !state.cities.length) {
-    return `Welcome to Élevé — I'll build you an unforgettable trip.\n\nTell me everything: where you're headed, when, how many people, what kind of trip (boys trip, family, couple's getaway…), your total budget, and what kind of experiences you love.\n\nOr just start with a destination and I'll guide you through the rest. ${infoTag}`;
-  }
-
-  // ─── READY TO BUILD ITINERARY ───
-  // Need at minimum: city + (days or dates) + groupSize + interests
-  const canBuild = state.cities.length && (state.numDays || state.dates) && state.groupSize && state.interests.length;
-
-  if (canBuild) {
-    const cityName = state.cities[0].charAt(0).toUpperCase() + state.cities[0].slice(1);
-    const city = state.cities[0];
+  // Can build!
+  if (canBuildItinerary(state)) {
+    const { itinerary, usedIds, totalCost, groupLabel } = buildItinerary(state);
     const days = state.numDays || 4;
-    const gs = state.groupSize;
-    const budget = state.totalBudget || 99999;
-    const groupLabel = state.groupType ? {boys:"boys trip",girls:"girls trip",family:"family vacation",couple:"couple's getaway",solo:"solo adventure",business:"corporate retreat"}[state.groupType] || "trip" : "trip";
+    const budgetNote = state.totalBudget ? (totalCost <= state.totalBudget ? "within budget" : "slightly over — swap any out") : "";
 
-    // Filter & score matching experiences
-    const matching = EXP.filter(e => e.city === city || e.region.includes(city))
-      .map(e => {
-        let score = 0;
-        state.interests.forEach(int => { e.tags.forEach(tag => { if (tag.includes(int) || int.includes(tag)) score += 3; }); });
-        if (gs <= (e.maxGuests || 99)) score += 2;
-        score += e.rating * 0.5;
-        return { ...e, score };
-      })
-      .filter(e => e.score > 0)
-      .sort((a, b) => b.score - a.score);
+    const infoTag = `|||INFO:${JSON.stringify(state)}|||`;
+    const recsTag = `|||RECS:[${usedIds.join(",")}]|||`;
+    const itinTag = `|||ITINERARY:${JSON.stringify(itinerary)}|||`;
 
-    // Build itinerary within budget
-    const itinerary = [];
-    const usedIds = new Set();
-    let runningCost = 0;
-    const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-    const startDay = 4;
-
-    for (let d = 0; d < days; d++) {
-      const dayExps = [];
-      const dayLabel = dayNames[(startDay + d) % 7];
-      const maxPerDay = state.pace === "packed" ? 3 : 2;
-
-      const timeSlots = [
-        { time: "8:00 AM" }, { time: "12:00 PM" },
-        { time: "4:00 PM" }, { time: "7:00 PM" },
-      ];
-
-      for (const slot of timeSlots) {
-        if (dayExps.length >= maxPerDay) break;
-        const candidate = matching.find(e => {
-          if (usedIds.has(e.id)) return false;
-          if (runningCost + (e.price * gs) > budget) return false;
-          return true;
-        });
-        if (candidate) {
-          dayExps.push({ id: candidate.id, time: slot.time, note: generateNote(candidate, d, dayExps.length, groupLabel) });
-          usedIds.add(candidate.id);
-          runningCost += candidate.price * gs;
-        }
-      }
-
-      if (dayExps.length > 0) {
-        itinerary.push({ day: d + 1, date: `2026-03-${String(15 + d).padStart(2, "0")}`, dayLabel, experiences: dayExps });
-      }
-    }
-
-    const recIds = [...usedIds];
-    const recsTag = recIds.length ? `|||RECS:[${recIds.join(",")}]|||` : "";
-    const itinTag = itinerary.length ? `|||ITINERARY:${JSON.stringify(itinerary)}|||` : "";
-    const budgetNote = budget < 99999 ? (runningCost <= budget ? "right within your budget" : "I stretched a bit to get you the best picks — you can swap any out") : "a solid mix of everything you're after";
-
-    return `Done — your ${days}-day ${groupLabel} to ${cityName} for ${gs} guests is ready. Total: ${fmt(runningCost)} (${budgetNote}).\n\nHead to the Ideas tab → AI Curated to see your full day-by-day itinerary. Tap any day for the timeline, and + to lock in experiences. |||NAV:ideas||| ${infoTag} ${recsTag} ${itinTag}`;
+    return {
+      text: `Your ${days}-day ${groupLabel} to ${cityName} is ready — ${fmt(totalCost)} total${budgetNote ? ` (${budgetNote})` : ""}. Switching you to your itinerary now.`,
+      asked: "done",
+      tags: `|||NAV:ideas||| ${infoTag} ${recsTag} ${itinTag}`,
+    };
   }
 
-  // ─── HAVE DESTINATION, ASK FOR EVERYTHING ELSE AT ONCE ───
-  if (state.cities.length && missing.length > 0) {
-    const cityName = state.cities[0].charAt(0).toUpperCase() + state.cities[0].slice(1);
-    const needs = missing.filter(m => m !== "destination");
+  // Build short acknowledgment + ask for what's missing
+  const needs = missing.filter(m => m !== "destination");
+  const labels = { dates:"when & how many days", groupSize:"how many people", groupType:"trip type (boys trip, family, couple…)", budget:"total budget for the group", interests:"what you're into (water, food, nightlife…)" };
 
-    if (needs.length === 0) {
-      // Shouldn't get here, but just in case
-      return `${cityName} — let me build your itinerary! What kind of experiences are you into? ${infoTag}`;
-    }
-
-    // Build a single combined question for everything remaining
-    const questions = [];
-    if (needs.includes("dates")) questions.push("when you're going and for how many days");
-    if (needs.includes("groupSize")) questions.push("how many people are coming");
-    if (needs.includes("groupType")) questions.push("what kind of trip it is (boys trip, family, couple's getaway, etc.)");
-    if (needs.includes("budget")) questions.push("your total experience budget for the group");
-    if (needs.includes("interests")) questions.push("what kind of experiences you love (water, food, nightlife, adventure, culture, wellness…)");
-
-    const ack = [];
-    if (state.dates || state.numDays) ack.push(state.dates || `${state.numDays} days`);
-    if (state.groupSize) ack.push(`${state.groupSize} guests`);
-    if (state.groupType) ack.push({boys:"boys trip",girls:"girls trip",family:"family trip",couple:"couple's getaway",solo:"solo",business:"business trip"}[state.groupType]);
-    if (state.totalBudget) ack.push(fmt(state.totalBudget) + " budget");
-    if (state.interests.length) ack.push(state.interests.join(", "));
-
-    const ackStr = ack.length ? ` Got it — ${ack.join(", ")}.` : "";
-
-    if (questions.length === 1) {
-      return `${cityName} — great choice.${ackStr} Just need one more thing: ${questions[0]}. ${infoTag}`;
-    }
-
-    return `${cityName} — love it.${ackStr}\n\nTo build your perfect itinerary, I still need: ${questions.join(", and ")}.\n\nYou can tell me all at once — like "6 guys, boys trip, March 15 for 4 days, $12k budget, we want water sports and nightlife." ${infoTag}`;
+  if (needs.length === 1) {
+    return { text: `Got it. Last thing — ${labels[needs[0]]}?`, asked: needs[0] };
   }
+  if (needs.length === 2) {
+    return { text: `Almost there. I need ${labels[needs[0]]} and ${labels[needs[1]]}.`, asked: "remaining" };
+  }
+  // 3+ missing
+  return { text: `${cityName}, nice. Tell me: ${needs.map(n => labels[n]).join(", ")}.`, asked: "remaining" };
+}
 
-  // ─── NO DESTINATION YET ───
-  return `I'd love to help plan your trip! Where are you headed? I have curated experiences in Miami, Tokyo, Amalfi, Napa, Bali, Santorini, St Andrews, Épernay, and more.\n\nFeel free to tell me everything at once — destination, dates, group size, budget, and what you're into. The more you share, the faster I can build your itinerary. ${infoTag}`;
+function buildItinerary(state) {
+  const city = state.cities[0];
+  const days = state.numDays || 4;
+  const gs = state.groupSize || 2;
+  const budget = state.totalBudget || 99999;
+  const groupLabel = state.groupType ? {boys:"boys trip",girls:"girls trip",family:"family vacation",couple:"couple's getaway",solo:"solo adventure",business:"corporate retreat"}[state.groupType]||"trip" : "trip";
+
+  const matching = EXP.filter(e => e.city===city||e.region.includes(city))
+    .map(e => { let score=0; (state.interests||[]).forEach(i=>{e.tags.forEach(tag=>{if(tag.includes(i)||i.includes(tag))score+=3;});}); if(gs<=(e.maxGuests||99))score+=2; score+=e.rating*0.5; return {...e,score}; })
+    .filter(e => e.score>0).sort((a,b) => b.score-a.score);
+
+  const itinerary=[]; const usedIds=new Set(); let cost=0;
+  const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  for (let d=0;d<days;d++) {
+    const dayExps=[]; const dayLabel=dayNames[(4+d)%7];
+    const slots=[{time:"8:00 AM"},{time:"12:00 PM"},{time:"4:00 PM"},{time:"7:00 PM"}];
+    for (const slot of slots) {
+      if (dayExps.length>=(state.pace==="packed"?3:2)) break;
+      const c=matching.find(e=>!usedIds.has(e.id)&&cost+(e.price*gs)<=budget);
+      if (c) { dayExps.push({id:c.id,time:slot.time,note:generateNote(c,d,dayExps.length,groupLabel)}); usedIds.add(c.id); cost+=c.price*gs; }
+    }
+    if (dayExps.length) itinerary.push({day:d+1,date:`2026-03-${String(15+d).padStart(2,"0")}`,dayLabel,experiences:dayExps});
+  }
+  return {itinerary,usedIds:[...usedIds],totalCost:cost,groupLabel};
 }
 
 function generateNote(exp, dayIdx, slotIdx, groupLabel) {
   const notes = {
-    yacht: ["Perfect way to see the coastline from the water", "Nothing beats being on the water — this is a must", "The sunset from the deck is going to be incredible"],
-    dining: ["The food here is exceptional — a real highlight", "This chef is one of the best-kept secrets in town", "Great way to experience the local food scene"],
-    fishing: ["Early start but worth every minute on the water", "This captain knows exactly where to find the big ones", "A classic experience — you'll love this"],
-    adventure: ["Get the adrenaline going with this one", "This is the one everyone talks about afterward", "Perfect for your crew — high energy and unforgettable"],
-    cultural: ["A different pace — really enriching experience", "You'll see a side of the city most tourists miss", "Great balance to the more active days"],
-    spa: ["You'll need this after all the action", "The perfect reset day — trust me on this one", "World-class relaxation, exactly what you need mid-trip"],
-    golf: ["Bucket list course — don't miss this one", "Bring your A-game for this course", "A truly special round of golf"],
-    wine: ["The tastings here are on another level", "Perfect afternoon activity — great wines, beautiful setting", "You'll want to ship a case home after this"],
+    yacht:["Perfect way to see the coastline","Nothing beats being on the water","Sunset from the deck will be incredible"],
+    dining:["The food here is exceptional","Best-kept culinary secret in town","Great way to experience local food"],
+    fishing:["Early start but worth every minute","This captain knows the best spots","A classic experience"],
+    adventure:["Get the adrenaline going","The one everyone talks about after","High energy and unforgettable"],
+    cultural:["A different pace — really enriching","See the city like a local","Great balance to active days"],
+    spa:["You'll need this after all the action","The perfect reset","World-class relaxation"],
+    golf:["Bucket list course","Bring your A-game","A truly special round"],
+    wine:["Tastings here are on another level","Perfect afternoon activity","You'll want to ship a case home"],
   };
-  const catNotes = notes[exp.cat] || ["A fantastic experience tailored to your group"];
-  return catNotes[dayIdx % catNotes.length];
+  return (notes[exp.cat]||["Fantastic experience"])[dayIdx%(notes[exp.cat]||[""]).length];
 }
 
 function parseAIResponse(raw) {
@@ -496,91 +398,73 @@ function Detail({ exp, onBack, onAdd, added, userInfo }) {
 /* ═══ TAB 1: AI CHAT ═══ */
 function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary, setTab }) {
   const [msgs, setMsgs] = useState([]);
-  const [convHistory, setConvHistory] = useState([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [det, setDet] = useState(null);
   const [init, setInit] = useState(false);
+  const [tripState, setTripState] = useState({ cities:[], groupSize:null, groupType:null, numDays:null, dates:null, totalBudget:null, interests:[], pace:null });
+  const [lastAsked, setLastAsked] = useState("destination");
   const end = useRef(null);
   const taRef = useRef(null);
 
+  // Initial greeting
   useEffect(() => {
-    if (init) return; setInit(true); setThinking(true);
-    (async () => {
-      const h = [{ role: "user", content: "Hi, I'd like to plan a trip." }];
-      const raw = await callClaude(h);
-      const { displayText } = parseAIResponse(raw);
-      setConvHistory([...h, { role: "assistant", content: raw }]);
-      setThinking(false);
-      setMsgs([{ f: "bot", t: displayText }]);
-    })();
+    if (init) return; setInit(true);
+    setTimeout(() => setMsgs([{ f: "bot", t: "Welcome to Élevé. Where are you headed?" }]), 300);
   }, [init]);
 
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
 
-  const send = async () => {
+  const send = () => {
     const text = input.trim();
     if (!text || thinking) return;
     setInput(""); if (taRef.current) taRef.current.style.height = "auto";
     setMsgs(p => [...p, { f: "user", t: text }]);
     setThinking(true);
 
-    const newH = [...convHistory, { role: "user", content: text }];
-    const raw = await callClaude(newH);
-    const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
-    setConvHistory([...newH, { role: "assistant", content: raw }]);
+    setTimeout(() => {
+      // Parse only the new message, with context of what we last asked
+      const parsed = parseNewMessage(text, lastAsked);
 
-    if (infoUpdate) {
-      setUserInfo(prev => {
-        const n = { ...prev };
-        if (infoUpdate.cities?.length) n.cities = infoUpdate.cities;
-        if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
-        if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
-        if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
-        if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
-        if (infoUpdate.dates) n.dates = infoUpdate.dates;
-        if (infoUpdate.interests?.length) n.interests = infoUpdate.interests;
-        if (infoUpdate.pace) n.pace = infoUpdate.pace;
-        if (infoUpdate.startDate) n.startDate = infoUpdate.startDate;
-        return n;
-      });
-    }
+      // Merge into persistent state
+      const newState = { ...tripState };
+      if (parsed.cities?.length) newState.cities = parsed.cities;
+      if (parsed.groupSize) newState.groupSize = parsed.groupSize;
+      if (parsed.groupType) newState.groupType = parsed.groupType;
+      if (parsed.numDays) newState.numDays = parsed.numDays;
+      if (parsed.dates) newState.dates = parsed.dates;
+      if (parsed.totalBudget) newState.totalBudget = parsed.totalBudget;
+      if (parsed.interests?.length) newState.interests = [...new Set([...(newState.interests||[]), ...parsed.interests])];
+      if (parsed.pace) newState.pace = parsed.pace;
+      setTripState(newState);
 
-    // Store AI recommendations
-    if (recIds.length > 0) {
-      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-      setAiRecs(prev => {
-        const existing = prev.map(e => e.id);
-        const newRecs = recs.filter(r => !existing.includes(r.id));
-        return [...prev, ...newRecs];
-      });
-    }
+      // Update app-level userInfo
+      setUserInfo(newState);
 
-    // Store AI itinerary
-    if (itinerary) {
-      setAiItinerary(itinerary);
-      // Also add all itinerary experiences to recs
-      const itinExpIds = itinerary.flatMap(d => d.experiences.map(e => e.id));
-      const itinExps = itinExpIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-      setAiRecs(prev => {
-        const existing = prev.map(e => e.id);
-        const newRecs = itinExps.filter(r => !existing.includes(r.id));
-        return [...prev, ...newRecs];
-      });
-    }
+      // Build response
+      const { text: reply, asked, tags } = buildResponse(newState, false);
+      setLastAsked(asked);
+      setThinking(false);
+      setMsgs(p => [...p, { f: "bot", t: reply }]);
 
-    setThinking(false);
-    setMsgs(p => [...p, { f: "bot", t: displayText }]);
-
-    if (recIds.length > 0) {
-      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-      if (recs.length) setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 300);
-    }
-
-    // Auto-navigate to Ideas tab when itinerary is ready
-    if (navTo && setTab) {
-      setTimeout(() => setTab(navTo), 2000);
-    }
+      // If we got tags, process them
+      if (tags) {
+        const { recIds, infoUpdate, itinerary, navTo } = parseAIResponse(tags);
+        if (recIds.length > 0) {
+          const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+          setAiRecs(prev => { const ex = prev.map(e=>e.id); return [...prev, ...recs.filter(r=>!ex.includes(r.id))]; });
+          setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 300);
+        }
+        if (itinerary) {
+          setAiItinerary(itinerary);
+          const itinExps = itinerary.flatMap(d=>d.experiences.map(e=>e.id)).map(id=>EXP.find(e=>e.id===id)).filter(Boolean);
+          setAiRecs(prev => { const ex = prev.map(e=>e.id); return [...prev, ...itinExps.filter(r=>!ex.includes(r.id))]; });
+        }
+        if (navTo && setTab) {
+          setTimeout(() => setTab(navTo), 1800);
+        }
+      }
+    }, 500 + Math.random() * 300);
   };
 
   if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
