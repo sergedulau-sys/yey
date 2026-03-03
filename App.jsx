@@ -1,42 +1,112 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-/* ═══ DATA ═══ */
+/* ═══ HOST AVAILABILITY DATA MODEL ═══
+   In production, each experience would have an `availability` array populated by hosts.
+   Hosts can sync via:
+   1. Direct calendar integration (Google Calendar, iCal, Calendly API)
+   2. Channel manager APIs (FareHarbor, Peek, Bookeo, Rezdy)
+   3. Manual entry in the Élevé Host Dashboard
+   
+   For this mockup, we simulate availability windows per experience.
+*/
+const generateAvailability = (expId) => {
+  // Simulate next 30 days of availability
+  const slots = [];
+  const today = new Date();
+  for (let d = 1; d <= 30; d++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + d);
+    const dayOfWeek = date.getDay();
+    // Most experiences available most days, some blackout
+    if (Math.random() > 0.15) {
+      const spotsTotal = Math.floor(Math.random() * 8) + 4;
+      const spotsTaken = Math.floor(Math.random() * spotsTotal);
+      slots.push({
+        date: date.toISOString().split("T")[0],
+        dayOfWeek,
+        spotsAvailable: spotsTotal - spotsTaken,
+        spotsTotal,
+        priceModifier: dayOfWeek === 0 || dayOfWeek === 6 ? 1.15 : 1.0, // weekend surcharge
+      });
+    }
+  }
+  return slots;
+};
+
+/* ═══ EXPERIENCE DATA ═══ */
 const EXP = [
-  { id:1,title:"Sunset Yacht Charter — Amalfi Coast",loc:"Amalfi, Italy",city:"amalfi",region:"italy",cat:"yacht",tags:["boating","sailing","water","romantic","luxury"],price:2800,duration:"6 hours",time:"2:00 PM",rating:4.97,reviews:43,host:"Captain Marco Bellini",ha:"MB",img:"https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?w=600&q=80",desc:"Sail the Amalfi coastline aboard a 60-foot luxury catamaran with champagne, a private chef, and hidden grotto stops.",inc:["Private chef lunch","Premium champagne","Snorkeling gear","Photographer"]},
-  { id:2,title:"Private Omakase with Chef Tanaka",loc:"Tokyo, Japan",city:"tokyo",region:"japan",cat:"dining",tags:["food","sushi","japanese","cultural","dinner"],price:1200,duration:"3 hours",time:"7:00 PM",rating:5.0,reviews:28,host:"Chef Kenji Tanaka",ha:"KT",img:"https://images.unsplash.com/photo-1579027989536-b7b1f875659b?w=600&q=80",desc:"An intimate 18-course omakase in Chef Tanaka's private kitchen overlooking the Imperial Palace gardens.",inc:["18-course omakase","Sake pairing","Kitchen tour","Recipe booklet"]},
-  { id:3,title:"Helicopter Wine Tour — Napa to Sonoma",loc:"Napa Valley, California",city:"napa",region:"california",cat:"wine",tags:["wine","helicopter","adventure","food","tasting"],price:3500,duration:"8 hours",time:"9:00 AM",rating:4.95,reviews:67,host:"Sommelier Claire Duval",ha:"CD",img:"https://images.unsplash.com/photo-1506377247377-2a5b3b417ebb?w=600&q=80",desc:"Helicopter flight over vineyards, three exclusive estates, rare library wines, and a Michelin vineyard lunch.",inc:["Helicopter transport","3 private tastings","Michelin lunch","6 bottles shipped"]},
-  { id:4,title:"Deep Sea Fishing Charter",loc:"Miami, Florida",city:"miami",region:"florida",cat:"fishing",tags:["fishing","ocean","boat","adventure","outdoors","water"],price:2200,duration:"Full day",time:"6:00 AM",rating:4.92,reviews:54,host:"Captain Ray Gonzalez",ha:"RG",img:"https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=600&q=80",desc:"Head offshore on a 48-foot Yellowfin for sailfish, mahi-mahi and tuna in the Gulf Stream.",inc:["All tackle & gear","Lunch & drinks","Fish cleaning","GoPro footage"]},
-  { id:5,title:"South Beach Food & Cocktail Tour",loc:"Miami, Florida",city:"miami",region:"florida",cat:"dining",tags:["food","cocktails","nightlife","walking","cultural","miami"],price:350,duration:"4 hours",time:"6:00 PM",rating:4.89,reviews:112,host:"Chef Maria Santos",ha:"MS",img:"https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&q=80",desc:"Walk South Beach's best-kept culinary secrets — 6 stops from ceviche bars to rooftop cocktails with a local chef guide.",inc:["6 food stops","3 cocktails","Local guide","VIP skip-the-line"]},
-  { id:6,title:"Private Yacht Sunset Cruise",loc:"Miami, Florida",city:"miami",region:"florida",cat:"yacht",tags:["boating","yacht","sunset","romantic","luxury","water","miami"],price:1800,duration:"4 hours",time:"4:00 PM",rating:4.96,reviews:67,host:"Captain Diego Reyes",ha:"DR",img:"https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?w=600&q=80",desc:"Cruise Biscayne Bay and the Miami skyline aboard a 52-foot luxury yacht. Champagne, canapes, and the best sunset in the city.",inc:["Premium champagne","Canapes","Bluetooth sound system","Photographer"]},
-  { id:7,title:"Everglades Airboat & Wildlife Safari",loc:"Miami, Florida",city:"miami",region:"florida",cat:"adventure",tags:["adventure","nature","wildlife","outdoors","airboat","miami"],price:450,duration:"5 hours",time:"8:00 AM",rating:4.91,reviews:89,host:"Guide Carlos Vega",ha:"CV",img:"https://images.unsplash.com/photo-1516426122078-c23e76319801?w=600&q=80",desc:"Race through the Everglades on a private airboat, spot alligators and exotic birds, and learn from a 3rd-generation guide.",inc:["Private airboat","Wildlife guide","Lunch","Photography"]},
-  { id:8,title:"Wynwood Art & Street Culture Experience",loc:"Miami, Florida",city:"miami",region:"florida",cat:"cultural",tags:["art","culture","walking","street art","creative","miami"],price:280,duration:"3 hours",time:"10:00 AM",rating:4.94,reviews:76,host:"Artist Luna Martinez",ha:"LM",img:"https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?w=600&q=80",desc:"Explore Wynwood's iconic murals and hidden galleries with a working street artist. Includes a hands-on spray paint session.",inc:["Gallery access","Spray paint session","Art history guide","Coffee & snacks"]},
-  { id:9,title:"Spa Day at Faena Miami Beach",loc:"Miami, Florida",city:"miami",region:"florida",cat:"spa",tags:["spa","wellness","relaxation","luxury","beach","miami"],price:890,duration:"Half day",time:"10:00 AM",rating:4.97,reviews:44,host:"Therapist Ana Lucia",ha:"AL",img:"https://images.unsplash.com/photo-1540555700478-4be289fbec6d?w=600&q=80",desc:"The ultimate Miami spa experience — hammam ritual, oceanfront massage, and lunch at the Faena pool deck.",inc:["Hammam ritual","90-min massage","Pool access","Lunch"]},
-  { id:10,title:"Private Golf at Doral Blue Monster",loc:"Miami, Florida",city:"miami",region:"florida",cat:"golf",tags:["golf","sport","outdoors","luxury","miami"],price:1200,duration:"5 hours",time:"7:00 AM",rating:4.93,reviews:31,host:"Pro Mike Henderson",ha:"MH",img:"https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=600&q=80",desc:"Play the legendary Blue Monster course at Trump National Doral with a PGA teaching pro.",inc:["Green fees","Cart","Pro instruction","Lunch at clubhouse"]},
-  { id:11,title:"St Andrews Old Course — VIP Golf",loc:"St Andrews, Scotland",city:"standrews",region:"scotland",cat:"golf",tags:["golf","sport","cultural","luxury","whisky"],price:5500,duration:"Full day",time:"7:30 AM",rating:4.98,reviews:19,host:"Pro Alistair McLeod",ha:"AM",img:"https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=600&q=80",desc:"Play the birthplace of golf with a former European Tour pro, caddie, and R&A whisky tasting.",inc:["Green fees","Professional caddie","Warm-up session","R&A whisky tasting"]},
-  { id:12,title:"Bali Cliff-Edge Spa Retreat",loc:"Uluwatu, Bali",city:"bali",region:"bali",cat:"spa",tags:["spa","wellness","relaxation","meditation","cultural"],price:980,duration:"5 hours",time:"9:00 AM",rating:4.95,reviews:61,host:"Healer Wayan Dharma",ha:"WD",img:"https://images.unsplash.com/photo-1540555700478-4be289fbec6d?w=600&q=80",desc:"Balinese massage, flower bath, guided meditation, raw food feast on southern cliffs.",inc:["90-min massage","Flower bath","Meditation","Raw food lunch"]},
-  { id:13,title:"Private Catamaran — Greek Islands",loc:"Santorini, Greece",city:"santorini",region:"greece",cat:"yacht",tags:["boating","sailing","romantic","water","sunset"],price:3200,duration:"Full day",time:"9:00 AM",rating:4.94,reviews:38,host:"Captain Nikos P.",ha:"NP",img:"https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=600&q=80",desc:"Cruise the caldera — hot springs, Red Beach, sunset dinner anchored off Oia.",inc:["BBQ dinner","Open bar","Snorkeling","Towels & sunbeds"]},
-  { id:14,title:"Champagne Cellar Tour — Épernay",loc:"Épernay, France",city:"epernay",region:"france",cat:"wine",tags:["wine","champagne","cultural","food","tasting"],price:1600,duration:"6 hours",time:"10:00 AM",rating:4.97,reviews:41,host:"Sommelier Pierre Laurent",ha:"PL",img:"https://images.unsplash.com/photo-1558618666-fcd25c85f82e?w=600&q=80",desc:"Legendary chalk cellars, vintage cuvées, private vineyard lunch.",inc:["3 cellar tours","6+ tastings","Vineyard lunch","Vintage bottle"]},
-  { id:15,title:"Jet Ski Tour of Biscayne Bay",loc:"Miami, Florida",city:"miami",region:"florida",cat:"adventure",tags:["water","adventure","jet ski","outdoors","fun","miami"],price:320,duration:"2 hours",time:"11:00 AM",rating:4.88,reviews:93,host:"Guide Tommy Reeves",ha:"TR",img:"https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=600&q=80",desc:"Ride jet skis through Biscayne Bay, past Star Island celebrity homes, and under the MacArthur Causeway.",inc:["Jet ski rental","Safety gear","Guide","Photos"]},
-];
+  { id:1,title:"Sunset Yacht Charter — Amalfi Coast",loc:"Amalfi, Italy",city:"amalfi",region:"italy",cat:"yacht",tags:["boating","sailing","water","romantic","luxury"],price:2800,duration:"6 hours",time:"2:00 PM",rating:4.97,reviews:43,host:"Captain Marco Bellini",ha:"MB",img:"https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?w=600&q=80",desc:"Sail the Amalfi coastline aboard a 60-foot luxury catamaran with champagne, a private chef, and hidden grotto stops.",inc:["Private chef lunch","Premium champagne","Snorkeling gear","Photographer"],maxGuests:12},
+  { id:2,title:"Private Omakase with Chef Tanaka",loc:"Tokyo, Japan",city:"tokyo",region:"japan",cat:"dining",tags:["food","sushi","japanese","cultural","dinner"],price:1200,duration:"3 hours",time:"7:00 PM",rating:5.0,reviews:28,host:"Chef Kenji Tanaka",ha:"KT",img:"https://images.unsplash.com/photo-1579027989536-b7b1f875659b?w=600&q=80",desc:"An intimate 18-course omakase in Chef Tanaka's private kitchen overlooking the Imperial Palace gardens.",inc:["18-course omakase","Sake pairing","Kitchen tour","Recipe booklet"],maxGuests:8},
+  { id:3,title:"Helicopter Wine Tour — Napa to Sonoma",loc:"Napa Valley, California",city:"napa",region:"california",cat:"wine",tags:["wine","helicopter","adventure","food","tasting"],price:3500,duration:"8 hours",time:"9:00 AM",rating:4.95,reviews:67,host:"Sommelier Claire Duval",ha:"CD",img:"https://images.unsplash.com/photo-1506377247377-2a5b3b417ebb?w=600&q=80",desc:"Helicopter flight over vineyards, three exclusive estates, rare library wines, and a Michelin vineyard lunch.",inc:["Helicopter transport","3 private tastings","Michelin lunch","6 bottles shipped"],maxGuests:6},
+  { id:4,title:"Deep Sea Fishing Charter",loc:"Miami, Florida",city:"miami",region:"florida",cat:"fishing",tags:["fishing","ocean","boat","adventure","outdoors","water"],price:2200,duration:"Full day",time:"6:00 AM",rating:4.92,reviews:54,host:"Captain Ray Gonzalez",ha:"RG",img:"https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=600&q=80",desc:"Head offshore on a 48-foot Yellowfin for sailfish, mahi-mahi and tuna in the Gulf Stream.",inc:["All tackle & gear","Lunch & drinks","Fish cleaning","GoPro footage"],maxGuests:8},
+  { id:5,title:"South Beach Food & Cocktail Tour",loc:"Miami, Florida",city:"miami",region:"florida",cat:"dining",tags:["food","cocktails","nightlife","walking","cultural","miami"],price:350,duration:"4 hours",time:"6:00 PM",rating:4.89,reviews:112,host:"Chef Maria Santos",ha:"MS",img:"https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=600&q=80",desc:"Walk South Beach's best-kept culinary secrets — 6 stops from ceviche bars to rooftop cocktails with a local chef guide.",inc:["6 food stops","3 cocktails","Local guide","VIP skip-the-line"],maxGuests:12},
+  { id:6,title:"Private Yacht Sunset Cruise",loc:"Miami, Florida",city:"miami",region:"florida",cat:"yacht",tags:["boating","yacht","sunset","romantic","luxury","water","miami"],price:1800,duration:"4 hours",time:"4:00 PM",rating:4.96,reviews:67,host:"Captain Diego Reyes",ha:"DR",img:"https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?w=600&q=80",desc:"Cruise Biscayne Bay and the Miami skyline aboard a 52-foot luxury yacht. Champagne, canapes, and the best sunset in the city.",inc:["Premium champagne","Canapes","Bluetooth sound system","Photographer"],maxGuests:10},
+  { id:7,title:"Everglades Airboat & Wildlife Safari",loc:"Miami, Florida",city:"miami",region:"florida",cat:"adventure",tags:["adventure","nature","wildlife","outdoors","airboat","miami"],price:450,duration:"5 hours",time:"8:00 AM",rating:4.91,reviews:89,host:"Guide Carlos Vega",ha:"CV",img:"https://images.unsplash.com/photo-1516426122078-c23e76319801?w=600&q=80",desc:"Race through the Everglades on a private airboat, spot alligators and exotic birds, and learn from a 3rd-generation guide.",inc:["Private airboat","Wildlife guide","Lunch","Photography"],maxGuests:6},
+  { id:8,title:"Wynwood Art & Street Culture Experience",loc:"Miami, Florida",city:"miami",region:"florida",cat:"cultural",tags:["art","culture","walking","street art","creative","miami"],price:280,duration:"3 hours",time:"10:00 AM",rating:4.94,reviews:76,host:"Artist Luna Martinez",ha:"LM",img:"https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?w=600&q=80",desc:"Explore Wynwood's iconic murals and hidden galleries with a working street artist. Includes a hands-on spray paint session.",inc:["Gallery access","Spray paint session","Art history guide","Coffee & snacks"],maxGuests:10},
+  { id:9,title:"Spa Day at Faena Miami Beach",loc:"Miami, Florida",city:"miami",region:"florida",cat:"spa",tags:["spa","wellness","relaxation","luxury","beach","miami"],price:890,duration:"Half day",time:"10:00 AM",rating:4.97,reviews:44,host:"Therapist Ana Lucia",ha:"AL",img:"https://images.unsplash.com/photo-1540555700478-4be289fbec6d?w=600&q=80",desc:"The ultimate Miami spa experience — hammam ritual, oceanfront massage, and lunch at the Faena pool deck.",inc:["Hammam ritual","90-min massage","Pool access","Lunch"],maxGuests:4},
+  { id:10,title:"Private Golf at Doral Blue Monster",loc:"Miami, Florida",city:"miami",region:"florida",cat:"golf",tags:["golf","sport","outdoors","luxury","miami"],price:1200,duration:"5 hours",time:"7:00 AM",rating:4.93,reviews:31,host:"Pro Mike Henderson",ha:"MH",img:"https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=600&q=80",desc:"Play the legendary Blue Monster course at Trump National Doral with a PGA teaching pro.",inc:["Green fees","Cart","Pro instruction","Lunch at clubhouse"],maxGuests:4},
+  { id:11,title:"St Andrews Old Course — VIP Golf",loc:"St Andrews, Scotland",city:"standrews",region:"scotland",cat:"golf",tags:["golf","sport","cultural","luxury","whisky"],price:5500,duration:"Full day",time:"7:30 AM",rating:4.98,reviews:19,host:"Pro Alistair McLeod",ha:"AM",img:"https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=600&q=80",desc:"Play the birthplace of golf with a former European Tour pro, caddie, and R&A whisky tasting.",inc:["Green fees","Professional caddie","Warm-up session","R&A whisky tasting"],maxGuests:4},
+  { id:12,title:"Bali Cliff-Edge Spa Retreat",loc:"Uluwatu, Bali",city:"bali",region:"bali",cat:"spa",tags:["spa","wellness","relaxation","meditation","cultural"],price:980,duration:"5 hours",time:"9:00 AM",rating:4.95,reviews:61,host:"Healer Wayan Dharma",ha:"WD",img:"https://images.unsplash.com/photo-1540555700478-4be289fbec6d?w=600&q=80",desc:"Balinese massage, flower bath, guided meditation, raw food feast on southern cliffs.",inc:["90-min massage","Flower bath","Meditation","Raw food lunch"],maxGuests:6},
+  { id:13,title:"Private Catamaran — Greek Islands",loc:"Santorini, Greece",city:"santorini",region:"greece",cat:"yacht",tags:["boating","sailing","romantic","water","sunset"],price:3200,duration:"Full day",time:"9:00 AM",rating:4.94,reviews:38,host:"Captain Nikos P.",ha:"NP",img:"https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=600&q=80",desc:"Cruise the caldera — hot springs, Red Beach, sunset dinner anchored off Oia.",inc:["BBQ dinner","Open bar","Snorkeling","Towels & sunbeds"],maxGuests:12},
+  { id:14,title:"Champagne Cellar Tour — Épernay",loc:"Épernay, France",city:"epernay",region:"france",cat:"wine",tags:["wine","champagne","cultural","food","tasting"],price:1600,duration:"6 hours",time:"10:00 AM",rating:4.97,reviews:41,host:"Sommelier Pierre Laurent",ha:"PL",img:"https://images.unsplash.com/photo-1558618666-fcd25c85f82e?w=600&q=80",desc:"Legendary chalk cellars, vintage cuvées, private vineyard lunch.",inc:["3 cellar tours","6+ tastings","Vineyard lunch","Vintage bottle"],maxGuests:8},
+  { id:15,title:"Jet Ski Tour of Biscayne Bay",loc:"Miami, Florida",city:"miami",region:"florida",cat:"adventure",tags:["water","adventure","jet ski","outdoors","fun","miami"],price:320,duration:"2 hours",time:"11:00 AM",rating:4.88,reviews:93,host:"Guide Tommy Reeves",ha:"TR",img:"https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=600&q=80",desc:"Ride jet skis through Biscayne Bay, past Star Island celebrity homes, and under the MacArthur Causeway.",inc:["Jet ski rental","Safety gear","Guide","Photos"],maxGuests:8},
+].map(e => ({ ...e, availability: generateAvailability(e.id) }));
 
 const CATS=[{id:"all",l:"All",i:"◈"},{id:"yacht",l:"Boating",i:"⛵"},{id:"dining",l:"Dining",i:"🍽"},{id:"wine",l:"Wine",i:"🍷"},{id:"fishing",l:"Fishing",i:"🎣"},{id:"golf",l:"Golf",i:"⛳"},{id:"spa",l:"Spa",i:"✧"},{id:"adventure",l:"Adventure",i:"🚁"},{id:"cultural",l:"Culture",i:"🏛"}];
 const fmt=n=>"$"+n.toLocaleString();
 
-const GROUP_TYPES = [
-  { id: "couple", label: "Couple's Getaway", icon: "💑" },
-  { id: "boys", label: "Boys Trip", icon: "🤝" },
-  { id: "girls", label: "Girls Trip", icon: "👯" },
-  { id: "family", label: "Family Trip", icon: "👨‍👩‍👧‍👦" },
-  { id: "solo", label: "Solo Adventure", icon: "🧭" },
-  { id: "business", label: "Business / Corporate", icon: "💼" },
-];
+/* ═══ SYSTEM PROMPT ═══ */
+const SYSTEM_PROMPT = `You are the Élevé concierge — a luxury travel experience curator. You help guests plan unforgettable trips.
 
-const BUDGET_OPTIONS = [
-  { id: "budget", label: "Under $200/day", range: [0, 200], icon: "$" },
-  { id: "moderate", label: "$200–$500/day", range: [200, 500], icon: "$$" },
-  { id: "premium", label: "$500–$1,500/day", range: [500, 1500], icon: "$$$" },
-  { id: "luxury", label: "$1,500+/day", range: [1500, 99999], icon: "$$$$" },
-];
+Your personality: warm, knowledgeable, confident but not stuffy. Like a well-connected friend who knows the best spots. Keep responses concise (2-4 sentences). Never use bullet points or numbered lists — keep it conversational and elegant.
+
+EXPERIENCE CATALOG:
+${EXP.map(e => `- ID:${e.id} "${e.title}" in ${e.loc} | ${e.cat} | $${e.price}/person | ${e.duration} | Starts ${e.time} | Max ${e.maxGuests} guests | Tags: ${e.tags.join(", ")}`).join("\n")}
+
+YOUR GOAL: Have a natural conversation to fully understand the guest's trip, then build them a perfect itinerary. You MUST gather ALL of this before recommending:
+
+1. **Destination** — where they're going
+2. **Exact dates** — specific start date and number of days (e.g. "March 15 for 4 days")
+3. **Group size** — exactly how many people
+4. **Group type** — couple, boys trip, girls trip, family, solo, business
+5. **Total budget** — their TOTAL budget for experiences across the whole trip for the whole group (not per person per day — the whole thing)
+6. **Interests** — what kind of experiences they want (water, food, nightlife, adventure, culture, wellness, sport, etc.)
+7. **Pace preference** — packed schedule or relaxed with free time?
+
+Ask these ONE AT A TIME conversationally. If they give multiple answers at once, acknowledge all and move to the next unknown. Be specific when asking about budget — ask for a total number for the whole group for the whole trip.
+
+WHEN YOU HAVE ALL 7 PIECES OF INFO, build a FULL DAY-BY-DAY ITINERARY. Consider:
+- Don't overlap times (a 6-hour yacht charter at 2 PM means nothing else until 8 PM)
+- Match group size to experience capacity (maxGuests)
+- Stay within total budget (price × groupSize for each experience)
+- Mix experience types across days
+- Leave some free time / meals
+- Put high-energy activities in the morning, relaxed ones in the afternoon/evening
+
+RESPONSE FORMAT — include these tags at the END of every response:
+
+When you learn new info:
+|||INFO:{"cities":["miami"],"numDays":4,"groupSize":6,"groupType":"boys","totalBudget":15000,"dates":"March 15","interests":["water","food","adventure"],"pace":"packed","startDate":"2026-03-15"}|||
+
+When recommending individual experiences:
+|||RECS:[4,6,15]|||
+
+When building a full itinerary (ONLY after you have all 7 pieces):
+|||ITINERARY:[{"day":1,"date":"2026-03-15","dayLabel":"Sat","experiences":[{"id":7,"time":"8:00 AM","note":"Start the trip with an adrenaline rush"},{"id":5,"time":"6:00 PM","note":"Wind down with an evening food tour"}]},{"day":2,"date":"2026-03-16","dayLabel":"Sun","experiences":[{"id":4,"time":"6:00 AM","note":"Early start for deep sea fishing"},{"id":6,"time":"4:00 PM","note":"Sunset yacht cruise to end the day"}]}]|||
+
+Valid groupType: couple, boys, girls, family, solo, business
+Only recommend experiences that match the destination. Be selective — quality over quantity.
+Calculate running costs in your head: each experience costs price × groupSize. Stay under totalBudget.
+
+Start by warmly greeting them and asking where they're headed.`;
+
+/* ═══ COLORS ═══ */
+const C = {
+  bg: "#F9F7F4", surface: "#FFFFFF", surfaceAlt: "#F0EDE8",
+  text: "#1a1a1a", textSec: "#8C8578", textTer: "#B8B0A4",
+  accent: "#C6785C", accentLight: "#FDF0EB",
+  border: "#EBE6DF", success: "#059669", successBg: "#ECFDF5",
+};
 
 /* ═══ ICONS ═══ */
 const ic={
@@ -51,623 +121,486 @@ const ic={
   chk:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>,
   send:()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   arrow:()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>,
+  sparkle:()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>,
+  cal:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  users:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
 };
 
-/* ═══ AI PARSING ═══ */
-function parseUserMessage(text) {
-  const t = text.toLowerCase();
-  const info = { cities: [], interests: [], dates: null, groupSize: null, groupType: null, budget: null, numDays: null };
-  const cityMap = {
-    miami: "miami", "south beach": "miami", wynwood: "miami", brickell: "miami",
-    tokyo: "tokyo", japan: "tokyo",
-    italy: "amalfi", amalfi: "amalfi", tuscany: "amalfi", rome: "amalfi",
-    bali: "bali", greece: "santorini", santorini: "santorini",
-    napa: "napa", california: "napa", france: "epernay", paris: "epernay",
-    scotland: "standrews", cabo: "cabo", mexico: "cabo",
-  };
-  Object.entries(cityMap).forEach(([k, v]) => { if (t.includes(k) && !info.cities.includes(v)) info.cities.push(v); });
-
-  const intMap = {
-    food: ["food", "eat", "restaurant", "dining", "culinary", "chef", "sushi", "dinner", "lunch", "brunch"],
-    water: ["boat", "yacht", "sailing", "jet ski", "water", "ocean", "cruise", "catamaran", "fishing"],
-    adventure: ["adventure", "thrill", "explore", "airboat", "helicopter", "safari", "extreme"],
-    culture: ["art", "culture", "museum", "history", "gallery", "street art", "mural", "learn"],
-    wellness: ["spa", "wellness", "relax", "massage", "meditation", "yoga", "retreat"],
-    sport: ["golf", "sport", "tennis", "fitness"],
-    nightlife: ["nightlife", "bar", "club", "cocktail", "drink", "party"],
-    wine: ["wine", "champagne", "tasting", "vineyard", "winery"],
-    nature: ["nature", "wildlife", "everglades", "park", "hike", "outdoor"],
-  };
-  Object.entries(intMap).forEach(([cat, words]) => { words.forEach(w => { if (t.includes(w) && !info.interests.includes(cat)) info.interests.push(cat); }); });
-
-  // Parse group size
-  const sizeMatch = t.match(/(\d+)\s*(people|persons|of us|guys|girls|friends|guests|pax)/);
-  if (sizeMatch) info.groupSize = parseInt(sizeMatch[1]);
-  if (t.includes("just me") || t.includes("solo") || t.includes("by myself")) info.groupSize = 1;
-  if (t.includes("two of us") || t.includes("me and my") || t.includes("couple")) info.groupSize = 2;
-
-  // Parse group type
-  if (t.includes("boys trip") || t.includes("guys trip") || t.includes("bachelor")) info.groupType = "boys";
-  if (t.includes("girls trip") || t.includes("bachelorette")) info.groupType = "girls";
-  if (t.includes("family") || t.includes("kids") || t.includes("children")) info.groupType = "family";
-  if (t.includes("couple") || t.includes("anniversary") || t.includes("honeymoon") || t.includes("romantic")) info.groupType = "couple";
-  if (t.includes("solo")) info.groupType = "solo";
-  if (t.includes("business") || t.includes("corporate") || t.includes("team")) info.groupType = "business";
-
-  // Parse number of days
-  const dayMatch = t.match(/(\d+)\s*(days?|nights?)/);
-  if (dayMatch) info.numDays = parseInt(dayMatch[1]);
-  if (t.includes("weekend") || t.includes("2 days")) info.numDays = 2;
-  if (t.includes("long weekend")) info.numDays = 3;
-  if (t.includes("week") && !t.includes("weekend")) info.numDays = 7;
-
-  // Parse dates
-  const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-  months.forEach((m, idx) => {
-    const re = new RegExp(m + "\\s*(\\d{1,2})?");
-    const match = t.match(re);
-    if (match) {
-      const day = match[1] ? parseInt(match[1]) : 1;
-      info.dates = `${m.charAt(0).toUpperCase() + m.slice(1)} ${day}`;
-    }
-  });
-  if (t.includes("this weekend")) info.dates = "This weekend";
-  if (t.includes("next week")) info.dates = "Next week";
-  if (t.includes("next month")) info.dates = "Next month";
-
-  return info;
+/* ═══ CLAUDE API ═══ */
+async function callClaude(history) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYSTEM_PROMPT, messages: history }),
+    });
+    const data = await res.json();
+    return data.content?.map(b => b.type === "text" ? b.text : "").join("") || "Having a brief connection issue — could you try again?";
+  } catch (e) { return "Connection issue — please try again."; }
 }
 
-function getFilteredExperiences(info) {
-  const { cities, interests } = info;
-  return EXP.map(exp => {
-    let score = 0;
-    if (cities?.length) {
-      if (cities.includes(exp.city)) score += 10;
-      else if (cities.some(c => exp.region.includes(c))) score += 5;
-    }
-    if (interests?.length) {
-      interests.forEach(int => {
-        exp.tags.forEach(tag => {
-          if (tag.includes(int) || int.includes(tag)) score += 2;
-        });
-      });
-    }
-    return { ...exp, score };
-  }).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
+function parseAIResponse(raw) {
+  let text = raw;
+  let recIds = [], infoUpdate = null, itinerary = null;
+
+  const recsM = raw.match(/\|\|\|RECS:\[([^\]]*)\]\|\|\|/);
+  if (recsM) { recIds = recsM[1].split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n)); text = text.replace(recsM[0], ""); }
+
+  const infoM = raw.match(/\|\|\|INFO:(\{[^|]*\})\|\|\|/);
+  if (infoM) { try { infoUpdate = JSON.parse(infoM[1]); } catch(e){} text = text.replace(infoM[0], ""); }
+
+  const itinM = raw.match(/\|\|\|ITINERARY:(\[[\s\S]*?\])\|\|\|/);
+  if (itinM) { try { itinerary = JSON.parse(itinM[1]); } catch(e){} text = text.replace(itinM[0], ""); }
+
+  return { displayText: text.trim(), recIds, infoUpdate, itinerary };
 }
 
-/* ═══ ONBOARDING STAGES ═══ */
-const STAGES = ["destination", "dates", "group_size", "group_type", "budget", "interests", "complete"];
-
-function getNextQuestion(stage, userInfo) {
-  switch (stage) {
-    case "destination":
-      return "Where are you headed? Tell me a city or region and I'll start pulling together the best experiences there.";
-    case "dates":
-      return "When are you going, and for how many days?";
-    case "group_size":
-      return "How many people are in your group?";
-    case "group_type":
-      return "What kind of trip is this?";
-    case "budget":
-      return "What's your ideal daily budget per person for experiences?";
-    case "interests":
-      return `Perfect — I'm building your ${userInfo.cities?.[0] ? userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1) : ''} itinerary now. What kind of experiences are you drawn to? Think food, water sports, nightlife, adventure, culture, wellness…`;
-    default:
-      return null;
-  }
-}
-
-/* ═══ STYLE CONSTANTS ═══ */
-const COLORS = {
-  bg: "#F9F7F4",
-  surface: "#FFFFFF",
-  surfaceAlt: "#F0EDE8",
-  text: "#1a1a1a",
-  textSec: "#8C8578",
-  textTer: "#B8B0A4",
-  accent: "#C6785C",
-  accentHover: "#B56A4F",
-  accentLight: "#FDF0EB",
-  border: "#EBE6DF",
-  success: "#059669",
-  successBg: "#ECFDF5",
-  chatUser: "#C6785C",
-  chatBot: "#F0EDE8",
-};
-
-/* ═══ COMPONENTS ═══ */
+/* ═══ SHARED COMPONENTS ═══ */
 function CCard({ exp, onClick, onAdd, added, compact }) {
-  if (compact) return (
-    <div onClick={onClick} style={{ display: "flex", gap: 14, padding: "14px 0", borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer", alignItems: "center" }}>
+  if (!compact) return null;
+  return (
+    <div onClick={onClick} style={{ display: "flex", gap: 14, padding: "14px 0", borderBottom: `1px solid ${C.border}`, cursor: "pointer", alignItems: "center" }}>
       <img src={exp.img} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec, marginTop: 2 }}>{exp.loc} · {exp.duration}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3 }}>{ic.star()}<span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: COLORS.text }}>{exp.rating}</span><span style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec }}>· {fmt(exp.price)}/pp</span></div>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.loc} · {exp.duration}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3 }}>{ic.star()}<span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text }}>{exp.rating}</span><span style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>· {fmt(exp.price)}/pp</span></div>
       </div>
-      {onAdd && <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? COLORS.successBg : COLORS.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.2s" }}>{added ? ic.chk() : ic.plus()}</button>}
+      {onAdd && <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{added ? ic.chk() : ic.plus()}</button>}
     </div>
   );
-  return null;
 }
 
-function Detail({ exp, onBack, onAdd, added }) {
+function Detail({ exp, onBack, onAdd, added, userInfo }) {
+  const avail = exp.availability?.slice(0, 14) || [];
+  const groupFits = !userInfo.groupSize || userInfo.groupSize <= (exp.maxGuests || 99);
   return (
-    <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-      <div style={{ position: "relative", height: 260 }}>
+    <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+      <div style={{ position: "relative", height: 250 }}>
         <img src={exp.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, transparent 40%)" }} />
-        <button onClick={onBack} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.95)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(8px)" }}>{ic.back()}</button>
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 40%)" }} />
+        <button onClick={onBack} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.95)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic.back()}</button>
       </div>
-      <div style={{ padding: "20px 20px 130px", background: COLORS.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>{exp.loc}</div>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginBottom: 20 }}>{ic.star()}<span style={{ fontWeight: 600, color: COLORS.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${COLORS.border}`, marginBottom: 18 }}>
-          <div style={{ width: 42, height: 42, borderRadius: "50%", background: COLORS.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: COLORS.text }}>{exp.ha}</div>
+      <div style={{ padding: "20px 20px 130px", background: C.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>{exp.loc}</div>
+        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 16 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests} guests</span></div>
+
+        {/* Group fit warning */}
+        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds the max capacity of {exp.maxGuests}. You may need to book multiple sessions.</div>}
+
+        {/* Availability preview */}
+        <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>{ic.cal()} Availability</div>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
+            {avail.map((slot, i) => {
+              const d = new Date(slot.date + "T12:00:00");
+              const dayN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+              const hasSpots = slot.spotsAvailable > 0;
+              return (
+                <div key={i} style={{ minWidth: 52, padding: "8px 6px", borderRadius: 10, textAlign: "center", border: `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.5 }}>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{dayN}</div>
+                  <div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: hasSpots ? C.text : "#DC2626", marginTop: 2 }}>{d.getDate()}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 2 }}>{hasSpots ? `${slot.spotsAvailable} left` : "Full"}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${C.border}`, marginBottom: 18 }}>
+          <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
           <div><div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600 }}>Hosted by {exp.host}</div></div>
         </div>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: COLORS.textSec, marginBottom: 20 }}>{exp.desc}</p>
-        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 12, color: COLORS.text }}>What's included</h4>
-        {exp.inc.map((item, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginBottom: 8 }}><span style={{ width: 4, height: 4, borderRadius: "50%", background: COLORS.accent, flexShrink: 0 }} />{item}</div>)}
+        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: C.textSec, marginBottom: 20 }}>{exp.desc}</p>
+        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 12, color: C.text }}>What's included</h4>
+        {exp.inc.map((item, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 8 }}><span style={{ width: 4, height: 4, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />{item}</div>)}
       </div>
-      <div style={{ position: "fixed", bottom: 70, left: 0, right: 0, maxWidth: 480, margin: "0 auto", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", borderTop: `1px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 40 }}>
-        <div><span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: COLORS.text }}>{fmt(exp.price)}</span><span style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec }}> /person</span></div>
-        <button onClick={() => onAdd(exp)} style={{ padding: "11px 26px", borderRadius: 24, border: "none", background: added ? COLORS.successBg : COLORS.accent, color: added ? COLORS.success : "#fff", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}>{added ? "✓ Added" : "Add to trip"}</button>
+      <div style={{ position: "fixed", bottom: 70, left: 0, right: 0, maxWidth: 480, margin: "0 auto", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 40 }}>
+        <div><span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text }}>{fmt(exp.price)}</span><span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}> /person</span></div>
+        <button onClick={() => onAdd(exp)} style={{ padding: "11px 26px", borderRadius: 24, border: "none", background: added ? C.successBg : C.accent, color: added ? C.success : "#fff", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{added ? "✓ Added" : "Add to trip"}</button>
       </div>
     </div>
   );
 }
 
-/* ═══ CHIP SELECT (for onboarding) ═══ */
-function ChipSelect({ options, onSelect, multi }) {
-  const [selected, setSelected] = useState(multi ? [] : null);
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-      {options.map(opt => {
-        const isSelected = multi ? selected.includes(opt.id) : selected === opt.id;
-        return (
-          <button key={opt.id} onClick={() => {
-            if (multi) {
-              const next = isSelected ? selected.filter(s => s !== opt.id) : [...selected, opt.id];
-              setSelected(next);
-              onSelect(next);
-            } else {
-              setSelected(opt.id);
-              onSelect(opt.id);
-            }
-          }} style={{
-            padding: "8px 16px", borderRadius: 20, cursor: "pointer", transition: "all 0.2s",
-            border: `1.5px solid ${isSelected ? COLORS.accent : COLORS.border}`,
-            background: isSelected ? COLORS.accentLight : COLORS.surface,
-            color: isSelected ? COLORS.accent : COLORS.textSec,
-            fontFamily: "var(--fb)", fontSize: 13, fontWeight: 500,
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
-            {opt.icon && <span style={{ fontSize: 15 }}>{opt.icon}</span>}
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ═══ TAB 1: AI CHAT (Claude-style) ═══ */
-function AIChat({ userInfo, setUserInfo, trip, onAdd }) {
+/* ═══ TAB 1: AI CHAT ═══ */
+function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary }) {
   const [msgs, setMsgs] = useState([]);
+  const [convHistory, setConvHistory] = useState([]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [det, setDet] = useState(null);
-  const [stage, setStage] = useState("destination");
-  const [showChips, setShowChips] = useState(null);
+  const [init, setInit] = useState(false);
   const end = useRef(null);
-  const inputRef = useRef(null);
-  const textareaRef = useRef(null);
+  const taRef = useRef(null);
 
   useEffect(() => {
-    setTimeout(() => {
-      setMsgs([{
-        f: "bot",
-        t: "Welcome to Élevé. I'll help you build an unforgettable trip — curated experiences, all in one place.\n\nWhere are you headed?"
-      }]);
-    }, 300);
-  }, []);
-
-  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking, showChips]);
-
-  // Auto-resize textarea
-  const autoResize = useCallback(() => {
-    const el = textareaRef.current;
-    if (el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }
-  }, []);
-
-  const advanceStage = (parsed, newInfo) => {
-    let nextStage = stage;
-    const stageIdx = STAGES.indexOf(stage);
-
-    // Figure out which stage to go to
-    if (stage === "destination" && newInfo.cities?.length > 0) nextStage = "dates";
-    else if (stage === "dates" && (parsed.dates || parsed.numDays)) nextStage = "group_size";
-    else if (stage === "group_size" && (parsed.groupSize || newInfo.groupSize)) nextStage = "group_type";
-    else if (stage === "group_type") nextStage = "budget";
-    else if (stage === "budget") nextStage = "interests";
-    else if (stage === "interests" && newInfo.interests?.length > 0) nextStage = "complete";
-
-    // If they gave extra info, skip ahead
-    if (newInfo.cities?.length && newInfo.dates && newInfo.groupSize && newInfo.interests?.length) {
-      nextStage = "complete";
-    } else if (newInfo.cities?.length && newInfo.dates && newInfo.groupSize) {
-      if (STAGES.indexOf(nextStage) < STAGES.indexOf("group_type")) nextStage = "group_type";
-    }
-
-    return nextStage;
-  };
-
-  const send = (overrideText) => {
-    const text = (overrideText || input).trim();
-    if (!text) return;
-    if (!overrideText) setMsgs(p => [...p, { f: "user", t: text }]);
-    setInput("");
-    if (textareaRef.current) { textareaRef.current.style.height = "auto"; }
-    setThinking(true);
-    setShowChips(null);
-
-    setTimeout(() => {
-      const parsed = parseUserMessage(text);
-      const newInfo = {
-        cities: [...new Set([...(userInfo.cities || []), ...parsed.cities])],
-        interests: [...new Set([...(userInfo.interests || []), ...parsed.interests])],
-        dates: parsed.dates || userInfo.dates,
-        groupSize: parsed.groupSize || userInfo.groupSize,
-        groupType: parsed.groupType || userInfo.groupType,
-        budget: parsed.budget || userInfo.budget,
-        numDays: parsed.numDays || userInfo.numDays,
-      };
-      setUserInfo(newInfo);
-
-      const nextStage = advanceStage(parsed, newInfo);
-      setStage(nextStage);
-
-      let response = "";
-      if (nextStage === "complete") {
-        const matches = getFilteredExperiences(newInfo);
-        const cityName = newInfo.cities?.[0] ? newInfo.cities[0].charAt(0).toUpperCase() + newInfo.cities[0].slice(1) : "your destination";
-        const groupLabel = newInfo.groupType ? GROUP_TYPES.find(g => g.id === newInfo.groupType)?.label || "" : "";
-
-        response = `Here's what I've curated for your${groupLabel ? " " + groupLabel.toLowerCase() : ""} to ${cityName}`;
-        if (newInfo.numDays) response += ` (${newInfo.numDays} day${newInfo.numDays > 1 ? "s" : ""})`;
-        if (newInfo.groupSize) response += ` for ${newInfo.groupSize} guest${newInfo.groupSize > 1 ? "s" : ""}`;
-        response += ".\n\nBrowse below and tap + to add anything to your itinerary. You can also check the Ideas tab for the full catalog.";
-
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: response }]);
-        // Show recs
-        if (matches.length > 0) {
-          setTimeout(() => {
-            setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs: matches.slice(0, 5) }]);
-          }, 400);
-        }
-        return;
-      }
-
-      // Stage-specific responses
-      if (nextStage === "dates" && parsed.cities.length) {
-        const cityName = parsed.cities[0].charAt(0).toUpperCase() + parsed.cities[0].slice(1);
-        response = `${cityName} — excellent taste. When are you going, and for how many days?`;
-      } else if (nextStage === "group_size") {
-        response = parsed.numDays
-          ? `${parsed.numDays} day${parsed.numDays > 1 ? "s" : ""} — I'll plan accordingly. How many people are coming?`
-          : parsed.dates
-            ? `Got it, ${parsed.dates}. How many people will be in your group?`
-            : getNextQuestion(nextStage, newInfo);
-      } else if (nextStage === "group_type") {
-        response = `Party of ${newInfo.groupSize} — noted. What kind of trip is this?`;
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: response }]);
-        setTimeout(() => setShowChips("group_type"), 300);
-        return;
-      } else if (nextStage === "budget") {
-        const groupLabel = GROUP_TYPES.find(g => g.id === newInfo.groupType)?.label || "trip";
-        response = `A ${groupLabel.toLowerCase()} — I'll tailor the experiences. What's your ideal daily budget per person?`;
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: response }]);
-        setTimeout(() => setShowChips("budget"), 300);
-        return;
-      } else if (nextStage === "interests") {
-        response = getNextQuestion(nextStage, newInfo);
-      } else {
-        response = getNextQuestion(stage, newInfo) || "Tell me more about what you're looking for.";
-      }
-
+    if (init) return; setInit(true); setThinking(true);
+    (async () => {
+      const h = [{ role: "user", content: "Hi, I'd like to plan a trip." }];
+      const raw = await callClaude(h);
+      const { displayText } = parseAIResponse(raw);
+      setConvHistory([...h, { role: "assistant", content: raw }]);
       setThinking(false);
-      setMsgs(p => [...p, { f: "bot", t: response }]);
-    }, 800 + Math.random() * 400);
-  };
+      setMsgs([{ f: "bot", t: displayText }]);
+    })();
+  }, [init]);
 
-  const handleChipSelect = (type, value) => {
-    setShowChips(null);
-    if (type === "group_type") {
-      const label = GROUP_TYPES.find(g => g.id === value)?.label || value;
-      setMsgs(p => [...p, { f: "user", t: label }]);
-      setUserInfo(p => ({ ...p, groupType: value }));
-      setThinking(true);
-      setTimeout(() => {
-        setStage("budget");
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: `A ${label.toLowerCase()} — I'll tailor everything. What's your daily budget per person for experiences?` }]);
-        setTimeout(() => setShowChips("budget"), 300);
-      }, 600);
-    } else if (type === "budget") {
-      const opt = BUDGET_OPTIONS.find(b => b.id === value);
-      setMsgs(p => [...p, { f: "user", t: opt?.label || value }]);
-      setUserInfo(p => ({ ...p, budget: value }));
-      setThinking(true);
-      setTimeout(() => {
-        setStage("interests");
-        const cityName = userInfo.cities?.[0] ? userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1) : "your destination";
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: `Great budget range. Last thing — what kind of experiences excite you? Think: water sports, food, nightlife, adventure, art, wellness, golf…\n\nOr just say "surprise me" and I'll curate a mix.` }]);
-      }, 600);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || thinking) return;
+    setInput(""); if (taRef.current) taRef.current.style.height = "auto";
+    setMsgs(p => [...p, { f: "user", t: text }]);
+    setThinking(true);
+
+    const newH = [...convHistory, { role: "user", content: text }];
+    const raw = await callClaude(newH);
+    const { displayText, recIds, infoUpdate, itinerary } = parseAIResponse(raw);
+    setConvHistory([...newH, { role: "assistant", content: raw }]);
+
+    if (infoUpdate) {
+      setUserInfo(prev => {
+        const n = { ...prev };
+        if (infoUpdate.cities?.length) n.cities = infoUpdate.cities;
+        if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
+        if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
+        if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
+        if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
+        if (infoUpdate.dates) n.dates = infoUpdate.dates;
+        if (infoUpdate.interests?.length) n.interests = infoUpdate.interests;
+        if (infoUpdate.pace) n.pace = infoUpdate.pace;
+        if (infoUpdate.startDate) n.startDate = infoUpdate.startDate;
+        return n;
+      });
+    }
+
+    // Store AI recommendations
+    if (recIds.length > 0) {
+      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+      setAiRecs(prev => {
+        const existing = prev.map(e => e.id);
+        const newRecs = recs.filter(r => !existing.includes(r.id));
+        return [...prev, ...newRecs];
+      });
+    }
+
+    // Store AI itinerary
+    if (itinerary) {
+      setAiItinerary(itinerary);
+      // Also add all itinerary experiences to recs
+      const itinExpIds = itinerary.flatMap(d => d.experiences.map(e => e.id));
+      const itinExps = itinExpIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+      setAiRecs(prev => {
+        const existing = prev.map(e => e.id);
+        const newRecs = itinExps.filter(r => !existing.includes(r.id));
+        return [...prev, ...newRecs];
+      });
+    }
+
+    setThinking(false);
+    setMsgs(p => [...p, { f: "bot", t: displayText }]);
+
+    if (recIds.length > 0) {
+      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+      if (recs.length) setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 300);
     }
   };
 
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} />;
+  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: COLORS.bg }}>
-      {/* Header */}
-      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface, display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg }}>
+      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, background: C.surface, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: C.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: "#fff" }}>É</span>
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: COLORS.text }}>Élevé</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.success }} />
-          <span style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.textSec }}>Online</span>
-        </div>
+        <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: C.text }}>Élevé</div></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: C.success }} /><span style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>Online</span></div>
       </div>
 
-      {/* Messages */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px 8px" }}>
         {msgs.map((m, i) => {
-          if (m.t === "__RECS__" && m.recs) {
-            return (
-              <div key={i} style={{ marginBottom: 12, marginLeft: 0, padding: "4px 16px", background: COLORS.surface, borderRadius: 16, border: `1px solid ${COLORS.border}` }}>
-                {m.recs.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
-              </div>
-            );
-          }
+          if (m.t === "__RECS__" && m.recs) return (
+            <div key={i} style={{ marginBottom: 12, padding: "4px 16px", background: C.surface, borderRadius: 16, border: `1px solid ${C.border}`, animation: "fadeUp 0.3s ease" }}>
+              {m.recs.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
+            </div>
+          );
           const isBot = m.f === "bot";
           return (
-            <div key={i} style={{ display: "flex", justifyContent: isBot ? "flex-start" : "flex-end", marginBottom: 12, alignItems: "flex-end", gap: 8 }}>
+            <div key={i} style={{ display: "flex", justifyContent: isBot ? "flex-start" : "flex-end", marginBottom: 12, animation: "fadeUp 0.25s ease" }}>
               <div style={{
                 maxWidth: "85%", padding: "12px 16px",
                 borderRadius: isBot ? "2px 18px 18px 18px" : "18px 18px 2px 18px",
-                background: isBot ? COLORS.surface : COLORS.chatUser,
-                color: isBot ? COLORS.text : "#fff",
-                fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.6,
-                whiteSpace: "pre-wrap",
-                border: isBot ? `1px solid ${COLORS.border}` : "none",
+                background: isBot ? C.surface : C.accent,
+                color: isBot ? C.text : "#fff",
+                fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap",
+                border: isBot ? `1px solid ${C.border}` : "none",
                 boxShadow: isBot ? "0 1px 3px rgba(0,0,0,0.04)" : "none",
               }}>{m.t}</div>
             </div>
           );
         })}
-
-        {/* Chip selectors */}
-        {showChips === "group_type" && (
-          <div style={{ marginBottom: 12, animation: "fadeUp 0.3s ease" }}>
-            <ChipSelect options={GROUP_TYPES} onSelect={v => handleChipSelect("group_type", v)} />
-          </div>
-        )}
-        {showChips === "budget" && (
-          <div style={{ marginBottom: 12, animation: "fadeUp 0.3s ease" }}>
-            <ChipSelect options={BUDGET_OPTIONS} onSelect={v => handleChipSelect("budget", v)} />
-          </div>
-        )}
-
-        {/* Thinking indicator */}
         {thinking && (
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 8, marginBottom: 12 }}>
-            <div style={{ padding: "14px 18px", borderRadius: "2px 18px 18px 18px", background: COLORS.surface, border: `1px solid ${COLORS.border}`, display: "flex", gap: 5, alignItems: "center" }}>
-              {[0, 1, 2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.textTer, animation: `pulse 1.4s ease ${i * 0.16}s infinite` }} />)}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ padding: "14px 18px", borderRadius: "2px 18px 18px 18px", background: C.surface, border: `1px solid ${C.border}`, display: "inline-flex", gap: 5 }}>
+              {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.textTer, animation: `pulse 1.4s ease ${i*0.16}s infinite` }} />)}
             </div>
           </div>
         )}
         <div ref={end} />
       </div>
 
-      {/* Input */}
-      <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: "12px 16px 16px", background: COLORS.surface, display: "flex", gap: 10, alignItems: "flex-end" }}>
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={e => { setInput(e.target.value); autoResize(); }}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="Message Élevé..."
-          rows={1}
-          style={{
-            flex: 1, padding: "10px 16px", borderRadius: 20, border: `1.5px solid ${COLORS.border}`,
-            fontFamily: "var(--fb)", fontSize: 14, outline: "none", resize: "none",
-            lineHeight: 1.5, maxHeight: 120, background: COLORS.bg, color: COLORS.text,
-            transition: "border-color 0.2s",
-          }}
-          onFocus={e => e.target.style.borderColor = COLORS.accent}
-          onBlur={e => e.target.style.borderColor = COLORS.border}
-        />
-        <button onClick={() => send()} disabled={!input.trim()} style={{
-          width: 40, height: 40, borderRadius: "50%", border: "none",
-          background: input.trim() ? COLORS.accent : COLORS.surfaceAlt,
-          color: input.trim() ? "#fff" : COLORS.textTer,
-          cursor: input.trim() ? "pointer" : "not-allowed",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexShrink: 0, transition: "all 0.2s",
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 16px 16px", background: C.surface, display: "flex", gap: 10, alignItems: "flex-end" }}>
+        <textarea ref={taRef} value={input}
+          onChange={e => { setInput(e.target.value); const el = taRef.current; if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,120)+"px";} }}
+          onKeyDown={e => { if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} }}
+          placeholder="Message Élevé..." rows={1}
+          style={{ flex:1,padding:"10px 16px",borderRadius:20,border:`1.5px solid ${C.border}`,fontFamily:"var(--fb)",fontSize:14,outline:"none",resize:"none",lineHeight:1.5,maxHeight:120,background:C.bg,color:C.text }}
+          onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border} />
+        <button onClick={send} disabled={!input.trim()||thinking} style={{
+          width:40,height:40,borderRadius:"50%",border:"none",
+          background:input.trim()&&!thinking?C.accent:C.surfaceAlt,
+          color:input.trim()&&!thinking?"#fff":C.textTer,
+          cursor:input.trim()&&!thinking?"pointer":"not-allowed",
+          display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
         }}>{ic.send()}</button>
       </div>
-      <style>{`
-        @keyframes pulse{0%,80%,100%{transform:scale(0.6);opacity:0.3}40%{transform:scale(1);opacity:1}}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-      `}</style>
+      <style>{`@keyframes pulse{0%,80%,100%{transform:scale(0.6);opacity:0.3}40%{transform:scale(1);opacity:1}}@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 }
 
-/* ═══ TAB 2: IDEAS ═══ */
-function Ideas({ userInfo, onAdd, trip }) {
+/* ═══ TAB 2: IDEAS (Dual mode) ═══ */
+function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
+  const [mode, setMode] = useState("all"); // "all" or "curated"
   const [cat, setCat] = useState("all");
-  const [priceMax, setPriceMax] = useState(10000);
   const [det, setDet] = useState(null);
-  const [showFilters, setShowFilters] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null);
 
-  const contextFiltered = userInfo.cities?.length ? getFilteredExperiences(userInfo) : EXP;
-  const filtered = contextFiltered.filter(e => {
-    if (cat !== "all" && e.cat !== cat) return false;
-    if (e.price > priceMax) return false;
-    return true;
-  });
+  const hasCurated = aiRecs.length > 0 || aiItinerary;
+  const allFiltered = (cat === "all" ? EXP : EXP.filter(e => e.cat === cat));
+  const curatedFiltered = cat === "all" ? aiRecs : aiRecs.filter(e => e.cat === cat);
 
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} />;
+  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
+
+  // Curated itinerary day detail
+  if (mode === "curated" && selectedDay !== null && aiItinerary) {
+    const day = aiItinerary[selectedDay];
+    if (!day) { setSelectedDay(null); return null; }
+    const dayExps = day.experiences.map(de => ({ ...EXP.find(e => e.id === de.id), note: de.note, scheduledTime: de.time })).filter(e => e.id);
+    const totalCost = dayExps.reduce((s, e) => s + e.price, 0) * (userInfo.groupSize || 1);
+
+    return (
+      <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+        <div style={{ padding: "16px 20px", background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => setSelectedDay(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>{ic.back()}</button>
+          <div>
+            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>Day {day.day} — {day.dayLabel}</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""} · {fmt(totalCost)} for group</div>
+          </div>
+        </div>
+        <div style={{ padding: "16px 20px" }}>
+          {dayExps.sort((a,b) => {
+            const getH = t => { const m = (t||"").match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h; };
+            return getH(a.scheduledTime) - getH(b.scheduledTime);
+          }).map((exp, idx) => (
+            <div key={exp.id} style={{ display: "flex", gap: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20, flexShrink: 0 }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: C.accent, marginTop: 18, flexShrink: 0 }} />
+                {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: C.border, minHeight: 40 }} />}
+              </div>
+              <div onClick={() => setDet(exp)} style={{ flex: 1, background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 12, cursor: "pointer" }}>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <img src={exp.img} alt="" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em" }}>{exp.scheduledTime}</div>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{exp.title}</div>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
+                  </div>
+                  <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: trip.some(t=>t.id===exp.id) ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{trip.some(t=>t.id===exp.id) ? ic.chk() : ic.plus()}</button>
+                </div>
+                {exp.note && <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.accent, fontStyle: "italic", marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>"{exp.note}"</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-      <div style={{ padding: "20px 20px 12px", background: COLORS.surface }}>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: COLORS.text, margin: 0 }}>
-          {userInfo.cities?.length ? `Explore ${userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1)}` : "Explore"}
-        </h2>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginTop: 4 }}>
-          {userInfo.cities?.length ? "Curated from your conversation" : "Chat with the concierge to get personalized ideas"}
+    <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+      {/* Header */}
+      <div style={{ padding: "20px 20px 0", background: C.surface }}>
+        <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Ideas</h2>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>
+          {userInfo.cities?.length ? `Experiences in ${userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1)}` : "Discover premium experiences worldwide"}
         </p>
+
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: 8, marginTop: 16, paddingBottom: 16 }}>
+          <button onClick={() => setMode("all")} style={{
+            flex: 1, padding: "14px 12px", borderRadius: 14, cursor: "pointer", transition: "all 0.2s",
+            border: mode === "all" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`,
+            background: mode === "all" ? C.accentLight : C.surface, textAlign: "left",
+          }}>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: mode === "all" ? C.accent : C.text }}>All Experiences</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>{EXP.length} activities available</div>
+          </button>
+          <button onClick={() => hasCurated && setMode("curated")} style={{
+            flex: 1, padding: "14px 12px", borderRadius: 14, cursor: hasCurated ? "pointer" : "default", transition: "all 0.2s",
+            border: mode === "curated" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`,
+            background: mode === "curated" ? C.accentLight : C.surface, textAlign: "left",
+            opacity: hasCurated ? 1 : 0.45,
+          }}>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: mode === "curated" ? C.accent : C.text, display: "flex", alignItems: "center", gap: 6 }}>{ic.sparkle()} AI Curated</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>
+              {hasCurated ? `${aiRecs.length} picks for you` : "Chat with concierge first"}
+            </div>
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
+      {/* Category pills */}
+      <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
         {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{
           padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap",
-          border: cat === c.id ? `1.5px solid ${COLORS.accent}` : `1.5px solid ${COLORS.border}`,
-          background: cat === c.id ? COLORS.accentLight : COLORS.surface, color: cat === c.id ? COLORS.accent : COLORS.textSec,
+          border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`,
+          background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec,
           fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer",
-          display: "flex", alignItems: "center", gap: 5, transition: "all 0.2s",
+          display: "flex", alignItems: "center", gap: 5,
         }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
       </div>
 
-      <div style={{ padding: "12px 20px 8px" }}>
-        <button onClick={() => setShowFilters(!showFilters)} style={{
-          fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: COLORS.textSec,
-          background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 20,
-          padding: "6px 14px", cursor: "pointer",
-        }}>
-          {priceMax < 10000 ? `Under ${fmt(priceMax)}` : "Price filter"} {showFilters ? "▲" : "▼"}
-        </button>
-        {showFilters && (
-          <div style={{ marginTop: 12, padding: "16px", background: COLORS.surface, borderRadius: 12, border: `1px solid ${COLORS.border}` }}>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: COLORS.text, marginBottom: 8 }}>Max price: {fmt(priceMax)}</div>
-            <input type="range" min="200" max="10000" step="100" value={priceMax} onChange={e => setPriceMax(Number(e.target.value))} style={{ width: "100%", accentColor: COLORS.accent }} />
-          </div>
-        )}
-      </div>
+      {/* Content */}
+      {mode === "curated" ? (
+        <div style={{ padding: "16px 20px" }}>
+          {/* AI Itinerary section */}
+          {aiItinerary && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.accent }}>{ic.sparkle()} Your AI Itinerary</div>
+              </div>
+              {userInfo.groupSize && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+                  {[
+                    userInfo.groupSize && `${userInfo.groupSize} guests`,
+                    userInfo.numDays && `${userInfo.numDays} days`,
+                    userInfo.totalBudget && `${fmt(userInfo.totalBudget)} budget`,
+                    userInfo.groupType,
+                  ].filter(Boolean).map((tag, i) => (
+                    <span key={i} style={{ padding: "4px 10px", borderRadius: 12, background: C.surfaceAlt, fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec }}>{tag}</span>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(aiItinerary.length, 4)}, 1fr)`, gap: 8 }}>
+                {aiItinerary.map((day, i) => {
+                  const expCount = day.experiences.length;
+                  const dayCost = day.experiences.reduce((s, de) => {
+                    const exp = EXP.find(e => e.id === de.id);
+                    return s + (exp ? exp.price : 0);
+                  }, 0) * (userInfo.groupSize || 1);
+                  return (
+                    <button key={i} onClick={() => setSelectedDay(i)} style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 6px",
+                      borderRadius: 14, cursor: "pointer", border: `1.5px solid ${C.accent}`,
+                      background: C.accentLight, transition: "all 0.2s",
+                    }}>
+                      <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.dayLabel}</span>
+                      <span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.accent, marginTop: 2 }}>{day.day}</span>
+                      <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
+                        {Array.from({ length: Math.min(expCount, 4) }).map((_, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: C.accent }} />)}
+                      </div>
+                      <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec, marginTop: 4 }}>{fmt(dayCost)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Total cost */}
+              {aiItinerary && (
+                <div style={{ marginTop: 12, padding: "12px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total for group</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const exp = EXP.find(e => e.id === de.id); return ds + (exp ? exp.price : 0); }, 0), 0) * (userInfo.groupSize || 1))}</span>
+                </div>
+              )}
+            </div>
+          )}
 
-      <div style={{ padding: "0 20px 20px" }}>
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "40px 0" }}>
-            <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>🔍</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 14, color: COLORS.textSec }}>No matches — try adjusting filters.</div>
+          {/* Individual curated picks */}
+          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+            {aiItinerary ? "All recommended experiences" : "Your advisor's picks"}
           </div>
-        ) : (
-          <>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec, marginBottom: 8, marginTop: 8 }}>{filtered.length} experience{filtered.length !== 1 ? "s" : ""}</div>
-            {filtered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
-          </>
-        )}
-      </div>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8 }}>{curatedFiltered.length} experience{curatedFiltered.length !== 1 ? "s" : ""}</div>
+          {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
+        </div>
+      ) : (
+        <div style={{ padding: "8px 20px 20px" }}>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experience{allFiltered.length !== 1 ? "s" : ""}</div>
+          {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
+        </div>
+      )}
     </div>
   );
 }
 
-/* ═══ TAB 3: YOUR TRIP (Calendar-based itinerary) ═══ */
-function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd }) {
+/* ═══ TAB 3: YOUR TRIP ═══ */
+function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinerary }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [det, setDet] = useState(null);
   const dest = userInfo.cities?.length ? userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1) : null;
   const numDays = userInfo.numDays || 5;
-  const startDate = userInfo.dates || "Your Trip";
+  const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const startDayIdx = 3;
+  const dayLabels = Array.from({ length: numDays }, (_, i) => ({ key: `day-${i}`, short: dayNames[(startDayIdx+i)%7], num: i+1 }));
+  const getExpForDay = dk => trip.filter(e => tripDays[e.id] === dk);
+  const unassigned = trip.filter(e => !tripDays[e.id]);
 
-  // Generate day labels
-  const dayLabels = [];
-  const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  // Simulate starting on a Thursday for demo
-  const startDayIdx = 3; // Thu
-  for (let i = 0; i < numDays; i++) {
-    const dIdx = (startDayIdx + i) % 7;
-    dayLabels.push({ key: `day-${i}`, label: `Day ${i + 1}`, short: dayNames[dIdx], num: i + 1 });
-  }
+  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
 
-  // Get experiences for a specific day
-  const getExpForDay = (dayKey) => {
-    return trip.filter(exp => tripDays[exp.id] === dayKey);
-  };
-
-  // Count unassigned
-  const unassigned = trip.filter(exp => !tripDays[exp.id]);
-
-  // Assign experience to day
-  const assignToDay = (expId, dayKey) => {
-    setTripDays(p => ({ ...p, [expId]: dayKey }));
-  };
-
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} />;
-
-  // Day detail view
   if (selectedDay !== null) {
     const day = dayLabels[selectedDay];
     const dayExps = getExpForDay(day.key);
-    const totalCost = dayExps.reduce((s, e) => s + e.price, 0) * (userInfo.groupSize || 1);
-
     return (
-      <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-        <div style={{ padding: "16px 20px", background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+        <div style={{ padding: "16px 20px", background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setSelectedDay(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>{ic.back()}</button>
           <div>
-            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: COLORS.text }}>{day.short} — Day {day.num}</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec }}>{dayExps.length} experience{dayExps.length !== 1 ? "s" : ""}{totalCost > 0 ? ` · ${fmt(totalCost)} total` : ""}</div>
+            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{day.short} — Day {day.num}</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""}</div>
           </div>
         </div>
-
         {dayExps.length === 0 ? (
           <div style={{ padding: "60px 20px", textAlign: "center" }}>
             <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📅</div>
-            <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 600, color: COLORS.text, marginBottom: 8 }}>Nothing planned yet</div>
-            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, lineHeight: 1.6 }}>Add experiences from the Ideas tab or assign unplanned items to this day.</p>
+            <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nothing planned</div>
+            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Assign experiences to this day from the list below.</p>
           </div>
         ) : (
           <div style={{ padding: "16px 20px" }}>
-            {/* Timeline view */}
-            {dayExps.sort((a, b) => {
-              const getH = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if (!m) return 12; let h = parseInt(m[1]); if (m[3].toUpperCase() === "PM" && h !== 12) h += 12; if (m[3].toUpperCase() === "AM" && h === 12) h = 0; return h; };
+            {dayExps.sort((a,b) => {
+              const getH = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h; };
               return getH(a.time) - getH(b.time);
             }).map((exp, idx) => (
-              <div key={exp.id} style={{ display: "flex", gap: 16, marginBottom: 0 }}>
-                {/* Timeline line */}
+              <div key={exp.id} style={{ display: "flex", gap: 16 }}>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20, flexShrink: 0 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS.accent, marginTop: 18, flexShrink: 0 }} />
-                  {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: COLORS.border, minHeight: 40 }} />}
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: C.accent, marginTop: 18, flexShrink: 0 }} />
+                  {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: C.border, minHeight: 40 }} />}
                 </div>
-                {/* Card */}
-                <div onClick={() => setDet(exp)} style={{ flex: 1, background: COLORS.surface, borderRadius: 14, border: `1px solid ${COLORS.border}`, padding: 14, marginBottom: 12, cursor: "pointer" }}>
+                <div onClick={() => setDet(exp)} style={{ flex: 1, background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 12, cursor: "pointer" }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <img src={exp.img} alt="" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
+                    <img src={exp.img} alt="" style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover" }} />
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: COLORS.accent, textTransform: "uppercase", letterSpacing: "0.06em" }}>{exp.time}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: COLORS.text, marginTop: 2 }}>{exp.title}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.accent, textTransform: "uppercase" }}>{exp.time}</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{exp.title}</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                    <button onClick={e => { e.stopPropagation(); onRm(exp.id); setTripDays(p => { const n = { ...p }; delete n[exp.id]; return n; }); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: COLORS.surface, color: "#e11d48" }}>Remove</button>
-                    <button onClick={e => { e.stopPropagation(); setTripDays(p => { const n = { ...p }; delete n[exp.id]; return n; }); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: COLORS.surface, color: COLORS.textSec }}>Unassign</button>
+                    <button onClick={e => { e.stopPropagation(); onRm(exp.id); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: "#e11d48" }}>Remove</button>
+                    <button onClick={e => { e.stopPropagation(); setTripDays(p => { const n={...p}; delete n[exp.id]; return n; }); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: C.textSec }}>Unassign</button>
                   </div>
                 </div>
               </div>
@@ -678,116 +611,78 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd }) {
     );
   }
 
-  // Main trip view
   return (
-    <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-      <div style={{ padding: "20px 20px 0", background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, paddingBottom: 20 }}>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: COLORS.text, margin: 0 }}>Your Trip</h2>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginTop: 4 }}>
-          {dest ? `${dest}` : "Tell the concierge where you're going"}{userInfo.dates ? ` · ${userInfo.dates}` : ""}{userInfo.numDays ? ` · ${userInfo.numDays} days` : ""}{userInfo.groupSize ? ` · ${userInfo.groupSize} guest${userInfo.groupSize > 1 ? "s" : ""}` : ""}
+    <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+      <div style={{ padding: "20px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+        <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Your Trip</h2>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>
+          {dest||"Tell the concierge where you're going"}{userInfo.dates?` · ${userInfo.dates}`:""}{userInfo.numDays?` · ${userInfo.numDays}d`:""}{userInfo.groupSize?` · ${userInfo.groupSize} guests`:""}
         </p>
-
-        {/* Trip summary */}
         {trip.length > 0 && (
-          <div style={{ display: "flex", gap: 16, marginTop: 16 }}>
-            {[
-              { label: "Experiences", value: trip.length },
-              { label: "Total / pp", value: fmt(trip.reduce((s, e) => s + e.price, 0)) },
-              { label: "Planned", value: `${trip.filter(e => tripDays[e.id]).length}/${trip.length}` },
-            ].map((s, i) => (
-              <div key={i} style={{ flex: 1, textAlign: "center", padding: "12px 0", background: COLORS.bg, borderRadius: 10 }}>
-                <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: COLORS.text }}>{s.value}</div>
-                <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.textSec, marginTop: 2 }}>{s.label}</div>
+          <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+            {[{ l:"Experiences",v:trip.length},{l:"Total / pp",v:fmt(trip.reduce((s,e)=>s+e.price,0))},{l:"Planned",v:`${trip.filter(e=>tripDays[e.id]).length}/${trip.length}`}].map((s,i)=>(
+              <div key={i} style={{ flex:1,textAlign:"center",padding:"12px 0",background:C.bg,borderRadius:10 }}>
+                <div style={{ fontFamily:"var(--fh)",fontSize:18,fontWeight:700,color:C.text }}>{s.v}</div>
+                <div style={{ fontFamily:"var(--fb)",fontSize:11,color:C.textSec,marginTop:2 }}>{s.l}</div>
               </div>
             ))}
           </div>
         )}
       </div>
-
       {!trip.length ? (
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, marginBottom: 16, opacity: 0.25 }}>🗺</div>
-          <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 600, color: COLORS.text, marginBottom: 8 }}>No experiences yet</div>
-          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, lineHeight: 1.6 }}>Chat with your concierge or browse Ideas to start building your itinerary.</p>
+          <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 600, color: C.text, marginBottom: 8 }}>No experiences yet</div>
+          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Chat with your concierge or browse Ideas.</p>
         </div>
       ) : (
         <div style={{ padding: "16px 20px" }}>
-          {/* Day calendar grid */}
-          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: COLORS.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Your Itinerary</div>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(numDays, 7)}, 1fr)`, gap: 8, marginBottom: 20 }}>
-            {dayLabels.map((day, i) => {
+          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Itinerary</div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(numDays,7)},1fr)`, gap: 8, marginBottom: 20 }}>
+            {dayLabels.map((day,i) => {
               const count = getExpForDay(day.key).length;
-              const hasItems = count > 0;
               return (
                 <button key={day.key} onClick={() => setSelectedDay(i)} style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 4px",
-                  borderRadius: 12, cursor: "pointer", transition: "all 0.2s",
-                  border: `1.5px solid ${hasItems ? COLORS.accent : COLORS.border}`,
-                  background: hasItems ? COLORS.accentLight : COLORS.surface,
+                  display:"flex",flexDirection:"column",alignItems:"center",padding:"12px 4px",borderRadius:12,cursor:"pointer",
+                  border:`1.5px solid ${count>0?C.accent:C.border}`,background:count>0?C.accentLight:C.surface,
                 }}>
-                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: COLORS.textSec, textTransform: "uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: hasItems ? COLORS.accent : COLORS.text, marginTop: 2 }}>{day.num}</span>
-                  {hasItems && (
-                    <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
-                      {Array.from({ length: Math.min(count, 4) }).map((_, j) => (
-                        <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: COLORS.accent }} />
-                      ))}
-                    </div>
-                  )}
+                  <span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600,color:C.textSec,textTransform:"uppercase" }}>{day.short}</span>
+                  <span style={{ fontFamily:"var(--fh)",fontSize:20,fontWeight:700,color:count>0?C.accent:C.text,marginTop:2 }}>{day.num}</span>
+                  {count>0&&<div style={{ display:"flex",gap:3,marginTop:4 }}>{Array.from({length:Math.min(count,4)}).map((_,j)=><div key={j} style={{ width:5,height:5,borderRadius:"50%",background:C.accent }} />)}</div>}
                 </button>
               );
             })}
           </div>
-
-          {/* Unassigned experiences */}
           {unassigned.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: COLORS.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Assign to a day ({unassigned.length})</div>
+            <>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Assign to a day ({unassigned.length})</div>
               {unassigned.map(exp => (
-                <div key={exp.id} style={{ background: COLORS.surface, borderRadius: 14, border: `1px solid ${COLORS.border}`, padding: 14, marginBottom: 10 }}>
+                <div key={exp.id} style={{ background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 10 }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
                     <img src={exp.img} alt="" style={{ width: 50, height: 50, borderRadius: 8, objectFit: "cover" }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: COLORS.text }}>{exp.title}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.textSec }}>{exp.duration} · {exp.time} · {fmt(exp.price)}/pp</div>
-                    </div>
-                    <button onClick={() => onRm(exp.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: COLORS.textTer }}>✕</button>
+                    <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text }}>{exp.title}</div><div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>{exp.duration} · {fmt(exp.price)}/pp</div></div>
+                    <button onClick={() => onRm(exp.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.textTer }}>✕</button>
                   </div>
                   <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none" }}>
-                    {dayLabels.map(d => (
-                      <button key={d.key} onClick={() => assignToDay(exp.id, d.key)} style={{
-                        padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600,
-                        cursor: "pointer", border: `1px solid ${COLORS.border}`, background: COLORS.surface, color: COLORS.textSec,
-                        whiteSpace: "nowrap", transition: "all 0.15s",
-                      }}>{d.short}</button>
-                    ))}
+                    {dayLabels.map(d => <button key={d.key} onClick={() => setTripDays(p => ({...p,[exp.id]:d.key}))} style={{ padding:"5px 12px",borderRadius:16,fontSize:11,fontFamily:"var(--fb)",fontWeight:600,cursor:"pointer",border:`1px solid ${C.border}`,background:C.surface,color:C.textSec,whiteSpace:"nowrap" }}>{d.short}</button>)}
                   </div>
                 </div>
               ))}
-            </div>
+            </>
           )}
-
-          {/* Assigned day summaries */}
-          {dayLabels.map((day, i) => {
-            const dayExps = getExpForDay(day.key);
-            if (dayExps.length === 0) return null;
+          {dayLabels.map((day,i) => {
+            const de = getExpForDay(day.key); if (!de.length) return null;
             return (
-              <button key={day.key} onClick={() => setSelectedDay(i)} style={{
-                width: "100%", textAlign: "left", background: COLORS.surface, borderRadius: 14,
-                border: `1px solid ${COLORS.border}`, padding: 14, marginBottom: 10,
-                cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s",
-              }}>
-                <div style={{ width: 44, height: 44, borderRadius: 10, background: COLORS.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: COLORS.accent, textTransform: "uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: COLORS.accent, lineHeight: 1 }}>{day.num}</span>
+              <button key={day.key} onClick={() => setSelectedDay(i)} style={{ width:"100%",textAlign:"left",background:C.surface,borderRadius:14,border:`1px solid ${C.border}`,padding:14,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14 }}>
+                <div style={{ width:44,height:44,borderRadius:10,background:C.accentLight,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                  <span style={{ fontFamily:"var(--fb)",fontSize:9,fontWeight:700,color:C.accent,textTransform:"uppercase" }}>{day.short}</span>
+                  <span style={{ fontFamily:"var(--fh)",fontSize:16,fontWeight:700,color:C.accent,lineHeight:1 }}>{day.num}</span>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: COLORS.text }}>Day {day.num}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: COLORS.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {dayExps.map(e => e.title).join(" → ")}
-                  </div>
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:C.text }}>Day {day.num}</div>
+                  <div style={{ fontFamily:"var(--fb)",fontSize:12,color:C.textSec,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{de.map(e=>e.title).join(" → ")}</div>
                 </div>
-                <div style={{ color: COLORS.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
+                <div style={{ color:C.textTer,flexShrink:0 }}>{ic.arrow()}</div>
               </button>
             );
           })}
@@ -800,24 +695,24 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd }) {
 /* ═══ TAB 4: MESSAGES ═══ */
 function Msgs() {
   const cs = [
-    { h: "Captain Marco Bellini", a: "MB", l: "Looking forward to hosting you! Weather looks perfect.", t: "2m ago", u: true },
-    { h: "Chef Maria Santos", a: "MS", l: "I've reserved the best table on the terrace for your group.", t: "1h ago", u: true },
-    { h: "Captain Diego Reyes", a: "DR", l: "The yacht is prepped and ready. See you Saturday!", t: "3h ago", u: false },
+    { h:"Captain Marco Bellini",a:"MB",l:"Looking forward to hosting you! Weather looks perfect.",t:"2m ago",u:true },
+    { h:"Chef Maria Santos",a:"MS",l:"I've reserved the best table on the terrace for your group.",t:"1h ago",u:true },
+    { h:"Captain Diego Reyes",a:"DR",l:"The yacht is prepped and ready. See you Saturday!",t:"3h ago",u:false },
   ];
   return (
-    <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-      <div style={{ padding: "20px 20px 12px", background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: COLORS.text, margin: 0 }}>Messages</h2>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginTop: 4 }}>Chat with your hosts</p>
+    <div style={{ height:"100%",overflowY:"auto",background:C.bg }}>
+      <div style={{ padding:"20px 20px 12px",background:C.surface,borderBottom:`1px solid ${C.border}` }}>
+        <h2 style={{ fontFamily:"var(--fh)",fontSize:24,fontWeight:700,color:C.text,margin:0 }}>Messages</h2>
+        <p style={{ fontFamily:"var(--fb)",fontSize:13,color:C.textSec,marginTop:4 }}>Chat with your hosts</p>
       </div>
-      <div style={{ padding: "0 20px" }}>{cs.map((c, i) => (
-        <div key={i} style={{ display: "flex", gap: 14, padding: "16px 0", borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer", alignItems: "flex-start" }}>
-          <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLORS.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 700, flexShrink: 0, color: COLORS.text }}>{c.a}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}><span style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: COLORS.text }}>{c.h}</span><span style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.textTer }}>{c.t}</span></div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 13, color: c.u ? COLORS.text : COLORS.textSec, fontWeight: c.u ? 500 : 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.l}</div>
+      <div style={{ padding:"0 20px" }}>{cs.map((c,i)=>(
+        <div key={i} style={{ display:"flex",gap:14,padding:"16px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer" }}>
+          <div style={{ width:44,height:44,borderRadius:"50%",background:C.surfaceAlt,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fb)",fontSize:14,fontWeight:700,flexShrink:0,color:C.text }}>{c.a}</div>
+          <div style={{ flex:1,minWidth:0 }}>
+            <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}><span style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:C.text }}>{c.h}</span><span style={{ fontFamily:"var(--fb)",fontSize:11,color:C.textTer }}>{c.t}</span></div>
+            <div style={{ fontFamily:"var(--fb)",fontSize:13,color:c.u?C.text:C.textSec,fontWeight:c.u?500:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{c.l}</div>
           </div>
-          {c.u && <div style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.accent, marginTop: 6, flexShrink: 0 }} />}
+          {c.u&&<div style={{ width:8,height:8,borderRadius:"50%",background:C.accent,marginTop:6,flexShrink:0 }} />}
         </div>
       ))}</div>
     </div>
@@ -826,24 +721,24 @@ function Msgs() {
 
 /* ═══ TAB 5: PROFILE ═══ */
 function Prof() {
-  const mi = [{ l: "Personal Information", i: "👤" }, { l: "Payment Methods", i: "💳" }, { l: "Saved Experiences", i: "♥" }, { l: "Past Trips", i: "🗺" }, { l: "Notifications", i: "🔔" }, { l: "Privacy & Security", i: "🔒" }, { l: "Help & Support", i: "💬" }];
+  const mi=[{l:"Personal Information",i:"👤"},{l:"Payment Methods",i:"💳"},{l:"Saved Experiences",i:"♥"},{l:"Past Trips",i:"🗺"},{l:"Notifications",i:"🔔"},{l:"Privacy & Security",i:"🔒"},{l:"Help & Support",i:"💬"}];
   return (
-    <div style={{ height: "100%", overflowY: "auto", background: COLORS.bg }}>
-      <div style={{ padding: "20px 20px 0", textAlign: "center", background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, paddingBottom: 20 }}>
-        <div style={{ width: 72, height: 72, borderRadius: "50%", background: COLORS.accent, margin: "0 auto 12px", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fh)", fontSize: 28, fontWeight: 700, color: "#fff" }}>S</div>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: COLORS.text, margin: 0 }}>Serge</h2>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: COLORS.textSec, marginTop: 4 }}>Member since 2026</p>
-        <div style={{ display: "flex", justifyContent: "center", gap: 32, padding: "16px 0 0" }}>
-          {[["3", "Trips"], ["12", "Saved"], ["7", "Reviews"]].map(([n, l], i) => <div key={i} style={{ textAlign: "center" }}><div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: COLORS.text }}>{n}</div><div style={{ fontFamily: "var(--fb)", fontSize: 11, color: COLORS.textSec }}>{l}</div></div>)}
+    <div style={{ height:"100%",overflowY:"auto",background:C.bg }}>
+      <div style={{ padding:"20px",textAlign:"center",background:C.surface,borderBottom:`1px solid ${C.border}` }}>
+        <div style={{ width:72,height:72,borderRadius:"50%",background:C.accent,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--fh)",fontSize:28,fontWeight:700,color:"#fff" }}>S</div>
+        <h2 style={{ fontFamily:"var(--fh)",fontSize:22,fontWeight:700,color:C.text,margin:0 }}>Serge</h2>
+        <p style={{ fontFamily:"var(--fb)",fontSize:13,color:C.textSec,marginTop:4 }}>Member since 2026</p>
+        <div style={{ display:"flex",justifyContent:"center",gap:32,padding:"16px 0 0" }}>
+          {[["3","Trips"],["12","Saved"],["7","Reviews"]].map(([n,l],i)=><div key={i} style={{ textAlign:"center" }}><div style={{ fontFamily:"var(--fh)",fontSize:20,fontWeight:700,color:C.text }}>{n}</div><div style={{ fontFamily:"var(--fb)",fontSize:11,color:C.textSec }}>{l}</div></div>)}
         </div>
       </div>
-      <div style={{ padding: "8px 20px" }}>{mi.map((item, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0", borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}><span style={{ fontSize: 16, width: 24, textAlign: "center" }}>{item.i}</span><span style={{ fontFamily: "var(--fb)", fontSize: 14, color: COLORS.text }}>{item.l}</span></div>
-          <span style={{ color: COLORS.textTer, fontSize: 16 }}>›</span>
+      <div style={{ padding:"8px 20px" }}>{mi.map((item,i)=>(
+        <div key={i} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:14 }}><span style={{ fontSize:16,width:24,textAlign:"center" }}>{item.i}</span><span style={{ fontFamily:"var(--fb)",fontSize:14,color:C.text }}>{item.l}</span></div>
+          <span style={{ color:C.textTer,fontSize:16 }}>›</span>
         </div>
       ))}</div>
-      <div style={{ padding: "20px 20px", textAlign: "center" }}><button style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: "#e11d48", background: "none", border: "none", cursor: "pointer" }}>Log Out</button></div>
+      <div style={{ padding:20,textAlign:"center" }}><button style={{ fontFamily:"var(--fb)",fontSize:13,fontWeight:600,color:"#e11d48",background:"none",border:"none",cursor:"pointer" }}>Log Out</button></div>
     </div>
   );
 }
@@ -853,51 +748,41 @@ export default function App() {
   const [tab, setTab] = useState("chat");
   const [trip, setTrip] = useState([]);
   const [tripDays, setTripDays] = useState({});
-  const [userInfo, setUserInfo] = useState({ cities: [], interests: [], dates: null, groupSize: null, groupType: null, budget: null, numDays: null });
+  const [userInfo, setUserInfo] = useState({ cities:[], interests:[], dates:null, groupSize:null, groupType:null, totalBudget:null, numDays:null, pace:null, startDate:null });
+  const [aiRecs, setAiRecs] = useState([]);
+  const [aiItinerary, setAiItinerary] = useState(null);
+
   const add = e => { if (!trip.some(t => t.id === e.id)) setTrip(p => [...p, e]); };
-  const rm = id => { setTrip(p => p.filter(t => t.id !== id)); setTripDays(p => { const n = { ...p }; delete n[id]; return n; }); };
+  const rm = id => { setTrip(p => p.filter(t => t.id !== id)); setTripDays(p => { const n={...p}; delete n[id]; return n; }); };
+
   const tabs = [
-    { id: "chat", l: "Chat", i: ic.chat },
-    { id: "ideas", l: "Ideas", i: ic.ideas },
-    { id: "trip", l: "Trip", i: ic.trip },
-    { id: "messages", l: "Messages", i: ic.msg },
-    { id: "profile", l: "Profile", i: ic.prof },
+    { id:"chat",l:"Chat",i:ic.chat },
+    { id:"ideas",l:"Ideas",i:ic.ideas },
+    { id:"trip",l:"Trip",i:ic.trip },
+    { id:"messages",l:"Messages",i:ic.msg },
+    { id:"profile",l:"Profile",i:ic.prof },
   ];
 
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`
-        :root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{background:#E8E4DE;-webkit-font-smoothing:antialiased}
-        ::selection{background:${COLORS.accent};color:#fff}
-        ::-webkit-scrollbar{width:0;height:0}
-      `}</style>
-      <div style={{ height: "100vh", display: "flex", flexDirection: "column", maxWidth: 480, margin: "0 auto", background: COLORS.bg, position: "relative", boxShadow: "0 0 60px rgba(0,0,0,0.08)", overflow: "hidden" }}>
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          {tab === "chat" && <AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} />}
-          {tab === "ideas" && <Ideas userInfo={userInfo} onAdd={add} trip={trip} />}
-          {tab === "trip" && <TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} />}
-          {tab === "messages" && <Msgs />}
-          {tab === "profile" && <Prof />}
+      <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#E8E4DE;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
+      <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,position:"relative",boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
+        <div style={{ flex:1,overflow:"hidden" }}>
+          {tab==="chat"&&<AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} setAiRecs={setAiRecs} setAiItinerary={setAiItinerary} />}
+          {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} trip={trip} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
+          {tab==="trip"&&<TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} aiItinerary={aiItinerary} />}
+          {tab==="messages"&&<Msgs />}
+          {tab==="profile"&&<Prof />}
         </div>
-        <div style={{
-          display: "flex", justifyContent: "space-around", alignItems: "center",
-          height: 64, borderTop: `1px solid ${COLORS.border}`, background: COLORS.surface,
-          flexShrink: 0, paddingBottom: 4,
-        }}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-              background: "none", border: "none", cursor: "pointer", padding: "6px 12px",
-              position: "relative", color: tab === t.id ? COLORS.accent : COLORS.textTer,
-              transition: "color 0.2s",
-            }}>
-              {t.i(tab === t.id)}
-              <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600 }}>{t.l}</span>
-              {t.id === "trip" && trip.length > 0 && <div style={{ position: "absolute", top: 0, right: 2, width: 16, height: 16, borderRadius: "50%", background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", fontFamily: "var(--fb)" }}>{trip.length}</div>}
-              {t.id === "messages" && <div style={{ position: "absolute", top: 2, right: 8, width: 7, height: 7, borderRadius: "50%", background: COLORS.accent }} />}
+        <div style={{ display:"flex",justifyContent:"space-around",alignItems:"center",height:64,borderTop:`1px solid ${C.border}`,background:C.surface,flexShrink:0,paddingBottom:4 }}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",cursor:"pointer",padding:"6px 12px",position:"relative",color:tab===t.id?C.accent:C.textTer }}>
+              {t.i(tab===t.id)}
+              <span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600 }}>{t.l}</span>
+              {t.id==="trip"&&trip.length>0&&<div style={{ position:"absolute",top:0,right:2,width:16,height:16,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",fontFamily:"var(--fb)" }}>{trip.length}</div>}
+              {t.id==="ideas"&&aiRecs.length>0&&<div style={{ position:"absolute",top:0,right:2,width:16,height:16,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",fontFamily:"var(--fb)" }}>{aiRecs.length}</div>}
+              {t.id==="messages"&&<div style={{ position:"absolute",top:2,right:8,width:7,height:7,borderRadius:"50%",background:C.accent }} />}
             </button>
           ))}
         </div>
