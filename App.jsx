@@ -379,8 +379,6 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
         </div>
       </div>
       {mode === "curated" && aiItinerary ? (
-        <>
-          {/* Category pills */}
           <div style={{ padding: "16px 20px" }}>
             {/* Itinerary day boxes */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
@@ -438,9 +436,8 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
             <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>All recommended experiences</div>
             {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
           </div>
-        </>
       ) : (
-        <>
+        <div>
           <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
             {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
           </div>
@@ -448,7 +445,7 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
             <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experiences</div>
             {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
           </div>
-        </>
+        </div>
       )}
       </div>
     </div>
@@ -900,16 +897,16 @@ export default function App() {
   };
 
   if (mode === "host") return (
-    <>
+    <div>
       <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#000;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
       <HostDashboard onBack={() => setMode("guest")} />
-    </>
+    </div>
   );
 
   const tabs = [{id:"chat",l:"Chat",i:ic.chat},{id:"ideas",l:"Ideas",i:ic.ideas},{id:"trip",l:"Trip",i:ic.trip},{id:"messages",l:"Messages",i:ic.msg},{id:"profile",l:"Profile",i:ic.prof}];
   return (
-    <>
+    <div>
       <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#E8E4DE;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
       <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
@@ -931,6 +928,6 @@ export default function App() {
           ))}
         </div>
       </div>
-    </>
+    </div>
   );
 }
