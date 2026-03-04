@@ -404,10 +404,42 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
           </div>
         );
       })}
-      <div style={{ padding: "14px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ padding: "14px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total / person</span>
         <span style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const found = EXP.find(x => x.id === de.id); return ds + (found ? found.price : 0); }, 0), 0))}</span>
       </div>
+      {(() => {
+        const allIds = aiItinerary.flatMap(d => d.experiences.map(e => e.id));
+        const allAdded = allIds.every(id => trip.some(t => t.id === id));
+        const addAll = () => {
+          aiItinerary.forEach(day => {
+            day.experiences.forEach(de => {
+              const found = EXP.find(x => x.id === de.id);
+              if (found && !trip.some(t => t.id === found.id)) {
+                onBookSlot(found, day.date, de.time);
+              }
+            });
+          });
+        };
+        return (
+          <button onClick={allAdded ? undefined : addAll} style={{
+            width: "100%", padding: "16px 20px", borderRadius: 16, border: "none",
+            background: allAdded ? C.successBg : C.accent,
+            color: allAdded ? C.success : "#fff",
+            fontFamily: "var(--fb)", fontSize: 16, fontWeight: 700,
+            cursor: allAdded ? "default" : "pointer",
+            marginBottom: 24,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            boxShadow: allAdded ? "none" : "0 4px 16px rgba(183,149,111,0.35)",
+          }}>
+            {allAdded ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>{ic.chk()} Entire Itinerary Added</span>
+            ) : (
+              <span>Add Entire Itinerary to Trip</span>
+            )}
+          </button>
+        );
+      })()}
       <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>All recommended experiences</div>
       {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
     </div>
