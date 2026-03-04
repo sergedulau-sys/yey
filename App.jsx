@@ -103,14 +103,8 @@ const ic={
 };
 
 
-/* ═══ CLAUDE-POWERED CHAT ENGINE ═══ */
-
-
-/* ═══ TAB 1: AI CHAT (placeholder with custom message) ═══ */
-function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary, setTab }) {
-  const [det, setDet] = useState(null);
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
-
+/* ═══ TAB 1: AI CHAT (placeholder) ═══ */
+function AIChat({ userInfo, setUserInfo, trip, onAdd, onBookSlot, setAiRecs, setAiItinerary, setTab }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg }}>
       <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, background: C.surface, display: "flex", alignItems: "center", gap: 12 }}>
@@ -118,10 +112,8 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
           <span style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: "#fff" }}>É</span>
         </div>
         <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: C.text }}>Élevé</div></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: C.success }} /><span style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>Online</span></div>
       </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px 8px", display: "flex", alignItems: "flex-start" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px", display: "flex", alignItems: "flex-start" }}>
         <div style={{ maxWidth: "92%", padding: "16px 18px", borderRadius: "2px 18px 18px 18px", background: C.surface, border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <div style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.7, color: C.text }}>
             <p style={{ margin: "0 0 14px" }}>Hello Mr. Anthony Barrios, this is your conscience speaking. I want you to know that AI is so powerful that I can read your dirty little mind.</p>
@@ -130,14 +122,14 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
           </div>
         </div>
       </div>
-
-      <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 16px 16px", background: C.surface, display: "flex", gap: 10, alignItems: "flex-end" }}>
-        <div style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: `1.5px solid ${C.border}`, fontFamily: "var(--fb)", fontSize: 14, color: C.textTer, background: C.bg }}>AI chat coming soon...</div>
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 16px 16px", background: C.surface }}>
+        <div style={{ padding: "10px 16px", borderRadius: 20, border: `1.5px solid ${C.border}`, fontFamily: "var(--fb)", fontSize: 14, color: C.textTer, background: C.bg }}>AI chat coming soon...</div>
       </div>
     </div>
   );
 }
 
+/* ═══ SHARED: CCard ═══ */
 function CCard({ exp, onClick, onAdd, added, compact }) {
   if (!compact) return null;
   return (
@@ -153,140 +145,175 @@ function CCard({ exp, onClick, onAdd, added, compact }) {
   );
 }
 
+/* ═══ SHARED: TRIP DATES ═══ */
+const TRIP_DATES = [
+  { key: "day-0", date: "2026-03-12", label: "Thu, Mar 12", short: "Thu", num: 12, dayNum: 1, full: "Thursday, March 12" },
+  { key: "day-1", date: "2026-03-13", label: "Fri, Mar 13", short: "Fri", num: 13, dayNum: 2, full: "Friday, March 13" },
+  { key: "day-2", date: "2026-03-14", label: "Sat, Mar 14", short: "Sat", num: 14, dayNum: 3, full: "Saturday, March 14" },
+];
 
-function Detail({ exp, onBack, onAdd, added, userInfo, onBookSlot }) {
-  const avail = exp.availability?.slice(0, 14) || [];
-  const groupFits = !userInfo.groupSize || userInfo.groupSize <= (exp.maxGuests || 99);
+/* ═══ SHARED: Detail View ═══ */
+function Detail({ exp, onBack, onBookSlot, trip, tripDays, userInfo }) {
   const [selDate, setSelDate] = useState(null);
-  const [booked, setBooked] = useState(null); // { dateIdx, slotIdx } confirmation
-  const selDay = selDate !== null ? avail[selDate] : null;
+  const [justBooked, setJustBooked] = useState(null);
 
-  // Trip days for booking
-  const tripDays = [
-    { key: "2026-03-12", label: "Thu, Mar 12", short: "Day 1" },
-    { key: "2026-03-13", label: "Fri, Mar 13", short: "Day 2" },
-    { key: "2026-03-14", label: "Sat, Mar 14", short: "Day 3" },
-  ];
+  const getAvailForDate = (dateStr) => (exp.availability || []).find(a => a.date === dateStr);
 
-  const handleBook = (ts, dateStr) => {
-    // Add to trip with the specific time slot info
-    if (onBookSlot) {
-      onBookSlot(exp, dateStr, ts.time);
-    } else {
-      onAdd(exp);
-    }
-    setBooked(`${dateStr}-${ts.time}`);
-    setTimeout(() => setBooked(null), 2000);
+  const getScheduleForDay = (dayKey) => {
+    if (!trip || !tripDays) return [];
+    return trip
+      .filter(e => tripDays[e.id]?.day === dayKey && e.id !== exp.id)
+      .map(e => ({ ...e, bookedTime: tripDays[e.id]?.time || e.time }))
+      .sort((a, b) => {
+        const toMin = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m)return 720; let h=parseInt(m[1]); const mn=parseInt(m[2]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h*60+mn; };
+        return toMin(a.bookedTime) - toMin(b.bookedTime);
+      });
   };
+
+  const handleBook = (dayKey, dateStr, time) => {
+    if (onBookSlot) onBookSlot(exp, dateStr, time);
+    setJustBooked(`${dayKey}-${time}`);
+    setTimeout(() => setJustBooked(null), 2500);
+  };
+
+  const selDay = selDate !== null ? TRIP_DATES[selDate] : null;
+  const selAvail = selDay ? getAvailForDate(selDay.date) : null;
+  const selSchedule = selDay ? getScheduleForDay(selDay.key) : [];
+  const isAdded = trip?.some(t => t.id === exp.id);
 
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
-      <div style={{ position: "relative", height: 250 }}>
+      {/* Hero */}
+      <div style={{ position: "relative", height: 220 }}>
         <img src={exp.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 40%)" }} />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, transparent 50%)" }} />
         <button onClick={onBack} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.95)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic.back()}</button>
       </div>
-      <div style={{ padding: "20px 20px 130px", background: C.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
+
+      <div style={{ padding: "20px 20px 40px", background: C.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
         <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>{exp.loc}</div>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 16 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests} guests</span></div>
+        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 8px", lineHeight: 1.3 }}>{exp.title}</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 20 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests}</span></div>
 
-        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds max capacity of {exp.maxGuests}.</div>}
-
-        {/* ─── AVAILABILITY: Date selector ─── */}
-        <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>{ic.cal()} Select a date & time</div>
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {avail.map((slot, i) => {
-              const d = new Date(slot.date + "T12:00:00");
-              const dayN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
-              const mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-              const totalSpots = slot.timeSlots.reduce((s, ts) => s + ts.spotsAvailable, 0);
-              const hasSpots = totalSpots > 0;
+        {/* ═══ STEP 1: Pick a trip date ═══ */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>When do you want to do this?</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {TRIP_DATES.map((day, i) => {
               const isSel = selDate === i;
+              const sched = getScheduleForDay(day.key);
               return (
-                <button key={i} onClick={() => hasSpots && setSelDate(isSel ? null : i)} style={{ minWidth: 58, padding: "8px 6px", borderRadius: 12, textAlign: "center", cursor: hasSpots ? "pointer" : "default", border: isSel ? `2px solid ${C.accent}` : `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: isSel ? C.accentLight : hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.4, transition: "all 0.15s" }}>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 600, color: isSel ? C.accent : C.textSec, textTransform: "uppercase" }}>{dayN}</div>
-                  <div style={{ fontFamily: "var(--fh)", fontSize: 17, fontWeight: 700, color: isSel ? C.accent : hasSpots ? C.text : "#DC2626", marginTop: 1 }}>{d.getDate()}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 8, color: isSel ? C.accent : C.textSec, marginTop: 1 }}>{mn}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: isSel ? C.accent : hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 3 }}>{hasSpots ? `${slot.timeSlots.length} times` : "Full"}</div>
+                <button key={day.key} onClick={() => setSelDate(isSel ? null : i)} style={{
+                  flex: 1, padding: "14px 6px", borderRadius: 14, cursor: "pointer",
+                  border: isSel ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`,
+                  background: isSel ? C.accentLight : C.surface,
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                }}>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: isSel ? C.accent : C.textSec }}>{day.short}</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: isSel ? C.accent : C.text }}>{day.num}</span>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: isSel ? C.accent : C.textSec }}>Mar</span>
+                  {sched.length > 0 && <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec, marginTop: 2 }}>{sched.length} planned</span>}
                 </button>
               );
             })}
           </div>
+        </div>
 
-          {/* ─── HOURLY TIME SLOTS for selected date ─── */}
-          {selDay && (
-            <div style={{ marginTop: 14, animation: "fadeUp 0.2s ease" }}>
-              <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span>{(() => { const d = new Date(selDay.date + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" }); })()}</span>
-                {selDay.priceModifier > 1 && <span style={{ padding: "3px 10px", borderRadius: 8, background: "#FEF3C7", fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: "#B45309" }}>Weekend rate (+15%)</span>}
+        {/* ═══ STEP 2: Show your day's schedule + available times ═══ */}
+        {selDay && (
+          <div style={{ animation: "fadeUp 0.2s ease", marginBottom: 20 }}>
+
+            {/* Current schedule for this day */}
+            <div style={{ marginBottom: 14, padding: 14, background: C.bg, borderRadius: 14, border: `1px solid ${C.border}` }}>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                Your {selDay.label} schedule
               </div>
+              {selSchedule.length === 0 ? (
+                <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.success }}>Wide open — nothing booked yet!</div>
+              ) : (
+                selSchedule.map((e, i) => (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.accent, minWidth: 65 }}>{e.bookedTime}</div>
+                    <img src={e.img} alt="" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.title}</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>{e.duration}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Available time slots for this experience on this date */}
+            <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>Available times</span>
+              {selAvail?.priceModifier > 1 && <span style={{ padding: "3px 10px", borderRadius: 8, background: "#FEF3C7", fontSize: 10, fontWeight: 600, color: "#B45309" }}>Weekend +15%</span>}
+            </div>
+
+            {selAvail && selAvail.timeSlots?.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {selDay.timeSlots.map((ts, j) => {
+                {selAvail.timeSlots.map((ts, j) => {
                   const hasRoom = ts.spotsAvailable > 0;
-                  const groupOk = !userInfo.groupSize || userInfo.groupSize <= ts.spotsAvailable;
-                  const price = Math.round(exp.price * (selDay.priceModifier || 1));
-                  const isBooked = booked === `${selDay.date}-${ts.time}`;
+                  const price = Math.round(exp.price * (selAvail.priceModifier || 1));
+                  const isBooked = justBooked === `${selDay.key}-${ts.time}`;
+                  const conflict = selSchedule.find(e => e.bookedTime === ts.time);
                   return (
-                    <div key={j} style={{ padding: "12px 14px", borderRadius: 14, border: `1px solid ${isBooked ? C.success : hasRoom ? C.border : "#FECACA"}`, background: isBooked ? C.successBg : C.surface, opacity: hasRoom ? 1 : 0.45, transition: "all 0.2s" }}>
+                    <div key={j} style={{
+                      padding: "12px 14px", borderRadius: 14,
+                      border: `1px solid ${isBooked ? C.success : conflict ? "#FCD34D" : hasRoom ? C.border : "#FECACA"}`,
+                      background: isBooked ? C.successBg : C.surface,
+                      opacity: hasRoom ? 1 : 0.4,
+                    }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        {/* Time */}
-                        <div style={{ minWidth: 72 }}>
+                        <div style={{ minWidth: 68 }}>
                           <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: isBooked ? C.success : hasRoom ? C.text : "#DC2626" }}>{ts.time}</div>
                         </div>
-                        {/* Spots + price */}
                         <div style={{ flex: 1 }}>
                           <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: hasRoom ? C.success : "#DC2626", fontWeight: 600 }}>
-                            {hasRoom ? `${ts.spotsAvailable} of ${ts.spotsTotal} spots open` : "Fully booked"}
+                            {hasRoom ? `${ts.spotsAvailable} of ${ts.spotsTotal} spots` : "Fully booked"}
                           </div>
-                          <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text, marginTop: 2 }}>{fmt(price)}<span style={{ fontWeight: 400, fontSize: 11, color: C.textSec }}> /person</span></div>
+                          <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text, marginTop: 1 }}>{fmt(price)}<span style={{ fontWeight: 400, fontSize: 11, color: C.textSec }}> /pp</span></div>
                         </div>
-                        {/* Book button */}
                         {hasRoom && !isBooked && (
-                          <button onClick={() => handleBook(ts, selDay.date)} style={{
-                            padding: "8px 16px", borderRadius: 20, border: "none",
-                            background: groupOk ? C.accent : C.surfaceAlt,
-                            color: groupOk ? "#fff" : C.textSec,
+                          <button onClick={() => handleBook(selDay.key, selDay.date, ts.time)} style={{
+                            padding: "9px 18px", borderRadius: 20, border: "none",
+                            background: C.accent, color: "#fff",
                             fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600,
-                            cursor: groupOk ? "pointer" : "not-allowed", flexShrink: 0,
-                          }}>Add to trip</button>
+                            cursor: "pointer", flexShrink: 0,
+                          }}>Add</button>
                         )}
-                        {isBooked && (
-                          <span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.success, display: "flex", alignItems: "center", gap: 4 }}>{ic.chk()} Added</span>
-                        )}
+                        {isBooked && <span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.success, display: "flex", alignItems: "center", gap: 4 }}>{ic.chk()} Added!</span>}
                       </div>
-                      {hasRoom && !groupOk && userInfo.groupSize && (
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "#B45309", marginTop: 6 }}>Need {userInfo.groupSize} spots — only {ts.spotsAvailable} available</div>
-                      )}
+                      {conflict && hasRoom && <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "#B45309", marginTop: 6 }}>⚠ You have "{conflict.title}" at this time</div>}
                     </div>
                   );
                 })}
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div style={{ padding: 20, textAlign: "center", background: C.bg, borderRadius: 14, border: `1px solid ${C.border}` }}>
+                <div style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>No availability on this date</div>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Host */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${C.border}`, marginBottom: 18 }}>
-          <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
+        {/* Host + description */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
+          <div style={{ width: 40, height: 40, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
           <div><div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600 }}>Hosted by {exp.host}</div></div>
         </div>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: C.textSec, marginBottom: 20 }}>{exp.desc}</p>
-        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 12, color: C.text }}>What's included</h4>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: C.textSec, marginBottom: 18 }}>{exp.desc}</p>
+        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 10, color: C.text }}>What's included</h4>
         {exp.inc.map((item, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 8 }}><span style={{ width: 4, height: 4, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />{item}</div>)}
-      </div>
-      <div style={{ position: "fixed", bottom: 70, left: 0, right: 0, maxWidth: 480, margin: "0 auto", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 40 }}>
-        <div><span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text }}>{fmt(exp.price)}</span><span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}> /person</span></div>
-        <button onClick={() => onAdd(exp)} style={{ padding: "11px 26px", borderRadius: 24, border: "none", background: added ? C.successBg : C.accent, color: added ? C.success : "#fff", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{added ? "✓ Added" : "Add to trip"}</button>
       </div>
       <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 }
 
-function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
-  const [mode, setMode] = useState("all"); // "all" or "curated"
+/* ═══ TAB 2: IDEAS ═══ */
+function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerary }) {
+  const [mode, setMode] = useState("all");
   const [cat, setCat] = useState("all");
   const [det, setDet] = useState(null);
   const [selectedDay, setSelectedDay] = useState(null);
@@ -295,29 +322,21 @@ function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
   const allFiltered = (cat === "all" ? EXP : EXP.filter(e => e.cat === cat));
   const curatedFiltered = cat === "all" ? aiRecs : aiRecs.filter(e => e.cat === cat);
 
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
+  if (det) return <Detail exp={det} onBack={() => setDet(null)} onBookSlot={onBookSlot} trip={trip} tripDays={tripDays} userInfo={userInfo} />;
 
   // Curated itinerary day detail
   if (mode === "curated" && selectedDay !== null && aiItinerary) {
     const day = aiItinerary[selectedDay];
     if (!day) { setSelectedDay(null); return null; }
     const dayExps = day.experiences.map(de => ({ ...EXP.find(e => e.id === de.id), note: de.note, scheduledTime: de.time })).filter(e => e.id);
-    const totalCost = dayExps.reduce((s, e) => s + e.price, 0) * (userInfo.groupSize || 1);
-
     return (
       <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
         <div style={{ padding: "16px 20px", background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setSelectedDay(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>{ic.back()}</button>
-          <div>
-            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>Day {day.day} — {day.dayLabel}</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""} · {fmt(totalCost)} for group</div>
-          </div>
+          <div><div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>Day {day.day} — {day.dayLabel}</div></div>
         </div>
         <div style={{ padding: "16px 20px" }}>
-          {dayExps.sort((a,b) => {
-            const getH = t => { const m = (t||"").match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h; };
-            return getH(a.scheduledTime) - getH(b.scheduledTime);
-          }).map((exp, idx) => (
+          {dayExps.map((exp, idx) => (
             <div key={exp.id} style={{ display: "flex", gap: 16 }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20, flexShrink: 0 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: C.accent, marginTop: 18, flexShrink: 0 }} />
@@ -327,11 +346,10 @@ function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
                 <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                   <img src={exp.img} alt="" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em" }}>{exp.scheduledTime}</div>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.accent, textTransform: "uppercase" }}>{exp.scheduledTime}</div>
                     <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{exp.title}</div>
                     <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
                   </div>
-                  <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: trip.some(t=>t.id===exp.id) ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{trip.some(t=>t.id===exp.id) ? ic.chk() : ic.plus()}</button>
                 </div>
                 {exp.note && <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.accent, fontStyle: "italic", marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>"{exp.note}"</div>}
               </div>
@@ -344,152 +362,55 @@ function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
 
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
-      {/* Header */}
       <div style={{ padding: "20px 20px 0", background: C.surface }}>
         <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Ideas</h2>
         <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>
           {userInfo.cities?.length ? `Experiences in ${userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1)}` : "Discover premium experiences worldwide"}
         </p>
-
-        {/* Mode toggle */}
         <div style={{ display: "flex", gap: 8, marginTop: 16, paddingBottom: 16 }}>
-          <button onClick={() => setMode("all")} style={{
-            flex: 1, padding: "14px 12px", borderRadius: 14, cursor: "pointer", transition: "all 0.2s",
-            border: mode === "all" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`,
-            background: mode === "all" ? C.accentLight : C.surface, textAlign: "left",
-          }}>
+          <button onClick={() => setMode("all")} style={{ flex: 1, padding: "14px 12px", borderRadius: 14, cursor: "pointer", border: mode === "all" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`, background: mode === "all" ? C.accentLight : C.surface, textAlign: "left" }}>
             <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: mode === "all" ? C.accent : C.text }}>All Experiences</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>{EXP.length} activities available</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>{EXP.length} activities</div>
           </button>
-          <button onClick={() => hasCurated && setMode("curated")} style={{
-            flex: 1, padding: "14px 12px", borderRadius: 14, cursor: hasCurated ? "pointer" : "default", transition: "all 0.2s",
-            border: mode === "curated" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`,
-            background: mode === "curated" ? C.accentLight : C.surface, textAlign: "left",
-            opacity: hasCurated ? 1 : 0.45,
-          }}>
+          <button onClick={() => hasCurated && setMode("curated")} style={{ flex: 1, padding: "14px 12px", borderRadius: 14, cursor: hasCurated ? "pointer" : "default", border: mode === "curated" ? `2px solid ${C.accent}` : `1.5px solid ${C.border}`, background: mode === "curated" ? C.accentLight : C.surface, textAlign: "left", opacity: hasCurated ? 1 : 0.45 }}>
             <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: mode === "curated" ? C.accent : C.text, display: "flex", alignItems: "center", gap: 6 }}>{ic.sparkle()} AI Curated</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>
-              {hasCurated ? `${aiRecs.length} picks for you` : "Chat with concierge first"}
-            </div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec, marginTop: 3 }}>{hasCurated ? `${aiRecs.length} picks` : "Chat first"}</div>
           </button>
         </div>
       </div>
-
-      {/* Category pills */}
       <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-        {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{
-          padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap",
-          border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`,
-          background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec,
-          fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer",
-          display: "flex", alignItems: "center", gap: 5,
-        }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
+        {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
       </div>
-
-      {/* Content */}
-      {mode === "curated" ? (
-        <div style={{ padding: "16px 20px" }}>
-          {/* AI Itinerary section */}
-          {aiItinerary && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.accent }}>{ic.sparkle()} Your AI Itinerary</div>
-              </div>
-              {userInfo.groupSize && (
-                <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                  {[
-                    userInfo.groupSize && `${userInfo.groupSize} guests`,
-                    userInfo.numDays && `${userInfo.numDays} days`,
-                    userInfo.totalBudget && `${fmt(userInfo.totalBudget)} budget`,
-                    userInfo.groupType,
-                  ].filter(Boolean).map((tag, i) => (
-                    <span key={i} style={{ padding: "4px 10px", borderRadius: 12, background: C.surfaceAlt, fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec }}>{tag}</span>
-                  ))}
-                </div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(aiItinerary.length, 4)}, 1fr)`, gap: 8 }}>
-                {aiItinerary.map((day, i) => {
-                  const expCount = day.experiences.length;
-                  const dayCost = day.experiences.reduce((s, de) => {
-                    const exp = EXP.find(e => e.id === de.id);
-                    return s + (exp ? exp.price : 0);
-                  }, 0) * (userInfo.groupSize || 1);
-                  return (
-                    <button key={i} onClick={() => setSelectedDay(i)} style={{
-                      display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 6px",
-                      borderRadius: 14, cursor: "pointer", border: `1.5px solid ${C.accent}`,
-                      background: C.accentLight, transition: "all 0.2s",
-                    }}>
-                      <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.dayLabel}</span>
-                      <span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.accent, marginTop: 2 }}>{day.day}</span>
-                      <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
-                        {Array.from({ length: Math.min(expCount, 4) }).map((_, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: C.accent }} />)}
-                      </div>
-                      <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec, marginTop: 4 }}>{fmt(dayCost)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Total cost */}
-              {aiItinerary && (
-                <div style={{ marginTop: 12, padding: "12px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total for group</span>
-                  <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const exp = EXP.find(e => e.id === de.id); return ds + (exp ? exp.price : 0); }, 0), 0) * (userInfo.groupSize || 1))}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Individual curated picks */}
-          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-            {aiItinerary ? "All recommended experiences" : "Your advisor's picks"}
-          </div>
-          <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8 }}>{curatedFiltered.length} experience{curatedFiltered.length !== 1 ? "s" : ""}</div>
-          {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
-        </div>
-      ) : (
-        <div style={{ padding: "8px 20px 20px" }}>
-          <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experience{allFiltered.length !== 1 ? "s" : ""}</div>
-          {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
-        </div>
-      )}
+      <div style={{ padding: "8px 20px 20px" }}>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{(mode === "curated" ? curatedFiltered : allFiltered).length} experiences</div>
+        {(mode === "curated" ? curatedFiltered : allFiltered).map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
+      </div>
     </div>
   );
 }
 
 /* ═══ TAB 3: YOUR TRIP ═══ */
-
-/* ═══ TAB 3: YOUR TRIP ═══ */
-function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinerary }) {
+function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, onBookSlot, aiItinerary }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [det, setDet] = useState(null);
 
-  // Fixed trip dates: March 12-14, 2026
-  const TRIP_DATES = [
-    { key: "day-0", date: "2026-03-12", label: "March 12", short: "Thu", num: 1, full: "Thursday, March 12" },
-    { key: "day-1", date: "2026-03-13", label: "March 13", short: "Fri", num: 2, full: "Friday, March 13" },
-    { key: "day-2", date: "2026-03-14", label: "March 14", short: "Sat", num: 3, full: "Saturday, March 14" },
-  ];
-
-  // Get experiences for a specific day, sorted by time
   const getExpForDay = (dayKey) => {
     return trip
       .filter(e => tripDays[e.id]?.day === dayKey)
       .sort((a, b) => {
         const tA = tripDays[a.id]?.time || "12:00 PM";
         const tB = tripDays[b.id]?.time || "12:00 PM";
-        const toH = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h*60+parseInt(m[2]); };
-        return toH(tA) - toH(tB);
+        const toMin = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m)return 720; let h=parseInt(m[1]); const mn=parseInt(m[2]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h*60+mn; };
+        return toMin(tA) - toMin(tB);
       });
   };
 
-  const unassigned = trip.filter(e => !tripDays[e.id]);
   const totalCost = trip.reduce((s, e) => s + e.price, 0);
   const assignedCount = trip.filter(e => tripDays[e.id]).length;
 
-  if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
+  if (det) return <Detail exp={det} onBack={() => setDet(null)} onBookSlot={onBookSlot} trip={trip} tripDays={tripDays} userInfo={userInfo} />;
 
-  // ─── DAY DETAIL VIEW ───
+  /* ─── Day detail view ─── */
   if (selectedDay !== null) {
     const day = TRIP_DATES[selectedDay];
     const dayExps = getExpForDay(day.key);
@@ -499,34 +420,30 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
           <button onClick={() => setSelectedDay(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>{ic.back()}</button>
           <div>
             <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{day.full}</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""} scheduled</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length !== 1 ? "s" : ""} scheduled</div>
           </div>
         </div>
-
         {dayExps.length === 0 ? (
           <div style={{ padding: "60px 20px", textAlign: "center" }}>
             <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📅</div>
             <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nothing scheduled yet</div>
-            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Add experiences from the Ideas tab and assign them to this day.</p>
+            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Browse Ideas and add experiences to this day.</p>
           </div>
         ) : (
           <div style={{ padding: "20px" }}>
-            {/* Timeline */}
             {dayExps.map((exp, idx) => {
               const slot = tripDays[exp.id];
               return (
                 <div key={exp.id} style={{ display: "flex", gap: 16 }}>
-                  {/* Timeline connector */}
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 24, flexShrink: 0 }}>
                     <div style={{ width: 12, height: 12, borderRadius: "50%", background: C.accent, marginTop: 20, flexShrink: 0, border: "3px solid " + C.accentLight }} />
                     {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: `linear-gradient(to bottom, ${C.accent}40, ${C.border})`, minHeight: 50 }} />}
                   </div>
-                  {/* Event card */}
                   <div onClick={() => setDet(exp)} style={{ flex: 1, background: C.surface, borderRadius: 16, border: `1px solid ${C.border}`, marginBottom: 16, cursor: "pointer", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
                     <div style={{ display: "flex", gap: 14, padding: 14, alignItems: "center" }}>
                       <img src={exp.img} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.03em" }}>{slot?.time || exp.time}</div>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{slot?.time || exp.time}</div>
                         <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
                         <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
                       </div>
@@ -545,10 +462,9 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
     );
   }
 
-  // ─── MAIN TRIP VIEW ───
+  /* ─── Main trip overview ─── */
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
-      {/* Header */}
       <div style={{ padding: "20px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
         <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Your Trip</h2>
         <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>Miami · March 12–14, 2026 · 3 days</p>
@@ -568,11 +484,10 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, marginBottom: 16, opacity: 0.25 }}>🗺</div>
           <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 600, color: C.text, marginBottom: 8 }}>No experiences yet</div>
-          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Browse the Ideas tab to add experiences to your trip.</p>
+          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Browse the Ideas tab to find experiences.</p>
         </div>
       ) : (
         <div style={{ padding: "16px 20px" }}>
-          {/* ─── DAY BOXES ─── */}
           <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Your itinerary</div>
           <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
             {TRIP_DATES.map((day, i) => {
@@ -584,24 +499,22 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
                   border: `2px solid ${count > 0 ? C.accent : C.border}`,
                   background: count > 0 ? C.accentLight : C.surface,
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                  transition: "all 0.15s",
                 }}>
                   <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily: "var(--fh)", fontSize: 26, fontWeight: 700, color: count > 0 ? C.accent : C.text, lineHeight: 1 }}>{day.num}</span>
-                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>Mar {12 + i}</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 28, fontWeight: 700, color: count > 0 ? C.accent : C.text, lineHeight: 1 }}>{day.dayNum}</span>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>Mar {day.num}</span>
                   {count > 0 ? (
                     <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
                       {Array.from({ length: Math.min(count, 4) }).map((_, j) => <div key={j} style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent }} />)}
                     </div>
                   ) : (
-                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textTer, marginTop: 2 }}>Empty</span>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textTer }}>Empty</span>
                   )}
                 </button>
               );
             })}
           </div>
 
-          {/* ─── DAY SUMMARIES (clickable) ─── */}
           {TRIP_DATES.map((day, i) => {
             const dayExps = getExpForDay(day.key);
             if (!dayExps.length) return null;
@@ -609,48 +522,16 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
               <button key={day.key} onClick={() => setSelectedDay(i)} style={{ width: "100%", textAlign: "left", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ width: 48, height: 48, borderRadius: 12, background: C.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.num}</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.dayNum}</span>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.num} — {dayExps.length} experience{dayExps.length!==1?"s":""}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{dayExps.map(e => e.title).join(" → ")}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.dayNum} — {dayExps.length} experience{dayExps.length !== 1 ? "s" : ""}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{dayExps.map(e => `${tripDays[e.id]?.time || ""} ${e.title}`.trim()).join(" → ")}</div>
                 </div>
                 <div style={{ color: C.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
               </button>
             );
           })}
-
-          {/* ─── UNASSIGNED EXPERIENCES ─── */}
-          {unassigned.length > 0 && (
-            <>
-              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 20, marginBottom: 12 }}>Not yet scheduled ({unassigned.length})</div>
-              {unassigned.map(exp => (
-                <div key={exp.id} style={{ background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 10 }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
-                    <img src={exp.img} alt="" style={{ width: 50, height: 50, borderRadius: 10, objectFit: "cover" }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text }}>{exp.title}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>{exp.duration} · {fmt(exp.price)}/pp</div>
-                    </div>
-                    <button onClick={() => onRm(exp.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.textTer }}>✕</button>
-                  </div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Add to a day:</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {TRIP_DATES.map(d => (
-                      <button key={d.key} onClick={() => setTripDays(p => ({...p, [exp.id]: { day: d.key, time: exp.time }}))} style={{
-                        flex: 1, padding: "8px 4px", borderRadius: 12, cursor: "pointer",
-                        border: `1px solid ${C.border}`, background: C.surface,
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-                      }}>
-                        <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec }}>{d.short}</span>
-                        <span style={{ fontFamily: "var(--fh)", fontSize: 15, fontWeight: 700, color: C.text }}>Day {d.num}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
         </div>
       )}
     </div>
@@ -951,8 +832,8 @@ export default function App() {
       <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
         <div style={{ flex:1,overflow:"hidden" }}>
           {tab==="chat"&&<AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} onBookSlot={bookSlot} setAiRecs={setAiRecs} setAiItinerary={setAiItinerary} setTab={setTab} />}
-          {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} onBookSlot={bookSlot} trip={trip} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
-          {tab==="trip"&&<TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} aiItinerary={aiItinerary} />}
+          {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} onBookSlot={bookSlot} trip={trip} tripDays={tripDays} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
+          {tab==="trip"&&<TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} onBookSlot={bookSlot} aiItinerary={aiItinerary} />}
           {tab==="messages"&&<Msgs />}
           {tab==="profile"&&<Prof onSwitchToHost={()=>setMode("host")} />}
         </div>
