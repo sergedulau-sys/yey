@@ -105,467 +105,10 @@ const ic={
 
 /* ═══ CLAUDE-POWERED CHAT ENGINE ═══ */
 
-const CONCIERGE_PROMPT = `You are the Élevé concierge — a luxury travel experience curator. You help guests plan unforgettable trips.
 
-Your personality: warm, knowledgeable, confident but not stuffy. Think of a well-connected friend who knows the best spots everywhere. Keep responses SHORT — 1-3 sentences max. Be conversational, never use bullet points or numbered lists.
-
-You can talk about ANYTHING — travel tips, restaurant recs, what to pack, local culture, weather, whatever. But your core mission is to naturally gather trip details and build an itinerary.
-
-EXPERIENCE CATALOG (these are the experiences you can book):
-${EXP.map(e => `ID:${e.id} "${e.title}" in ${e.loc} | ${e.cat} | $${e.price}/pp | ${e.duration} | Max ${e.maxGuests} guests | Tags: ${e.tags.join(", ")}`).join("\n")}
-
-TO BUILD AN ITINERARY you need these 7 things (gather them naturally through conversation):
-1. Destination — where they're going
-2. Dates — when (e.g. "March 15")
-3. Number of days
-4. Group size — how many people
-5. Group type — couple, boys trip, girls trip, family, solo, business
-6. Total budget — total experience budget for the whole group for the whole trip
-7. Interests — what they want to do (water, food, nightlife, adventure, culture, wellness, sport)
-
-Don't interrogate them. If they tell you multiple things at once, great — acknowledge them all. If they want to chat about something else, that's fine too. Gently steer back when it feels natural.
-
-EVERY response must end with this tag (include ALL fields you know so far, null for unknowns):
-|||INFO:{"destination":null,"dates":null,"numDays":null,"groupSize":null,"groupType":null,"totalBudget":null,"interests":null}|||
-
-When you have ALL 7 pieces, build a day-by-day itinerary. Rules:
-- Match experiences to the destination
-- Respect group size vs maxGuests capacity
-- Stay within total budget (price × groupSize per experience)
-- 2-3 experiences per day max
-- Mix experience types across days
-
-When you build the itinerary, add this tag:
-|||ITINERARY:[{"day":1,"date":"2026-03-15","dayLabel":"Sat","experiences":[{"id":4,"time":"8:00 AM","note":"Start the trip right"},{"id":7,"time":"4:00 PM","note":"Wind down on the water"}]}]|||
-
-Also add: |||RECS:[4,7,12]||| with the IDs you recommended.
-
-IMPORTANT: Keep your visible response SHORT and conversational. The tags are hidden from the user. Start by warmly greeting them.`;
-
-function parseAIResponse(raw) {
-  let displayText = raw;
-  let recIds = [], infoUpdate = null, itinerary = null, navTo = null;
-
-  const infoM = raw.match(/\|\|\|INFO:(.*?)\|\|\|/);
-  if (infoM) { try { infoUpdate = JSON.parse(infoM[1]); } catch(e){} displayText = displayText.replace(infoM[0], ""); }
-
-  const recM = raw.match(/\|\|\|RECS:\[(.*?)\]\|\|\|/);
-  if (recM) { recIds = recM[1].split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n)); displayText = displayText.replace(recM[0], ""); }
-
-  const itinM = raw.match(/\|\|\|ITINERARY:([\s\S]*?)\|\|\|/);
-  if (itinM) { try { itinerary = JSON.parse(itinM[1]); } catch(e){} displayText = displayText.replace(itinM[0], ""); navTo = "ideas"; }
-
-  const navM = raw.match(/\|\|\|NAV:(\w+)\|\|\|/);
-  if (navM) { navTo = navM[1]; displayText = displayText.replace(navM[0], ""); }
-
-  displayText = displayText.replace(/\|\|\|[^|]*\|\|\|/g, "").trim();
-  return { displayText, recIds, infoUpdate, itinerary, navTo };
-}
-
-/* ═══ TAB 1: AI CHAT ═══ */
-
-/* ═══ LOCAL CONVERSATION ENGINE (fallback) ═══ */
-function localReply(text, tripState) {
-  const t = text.toLowerCase().trim();
-  const s = { ...tripState };
-  let understood = [];
-
-  // Parse everything we can from this message
-  const cityMap = {miami:"miami","south beach":"miami",tokyo:"tokyo",japan:"tokyo",italy:"amalfi",amalfi:"amalfi",bali:"bali",greece:"santorini",santorini:"santorini",napa:"napa",france:"epernay",paris:"epernay",scotland:"standrews"};
-  for (const [k,v] of Object.entries(cityMap)) { if (t.includes(k) && !s.destination) { s.destination = v; understood.push(v.charAt(0).toUpperCase()+v.slice(1)); break; } }
-
-  const sizeM = t.match(/(\d+)\s*(people|persons|of us|guys|girls|friends|guests|boys|men|women|pax)/);
-  if (sizeM) { s.groupSize = parseInt(sizeM[1]); understood.push(`${s.groupSize} guests`); }
-
-  const types = [[/boys?\s*trip|guys?\s*trip|bachelor/,"boys"],[/girls?\s*trip|bachelorette|ladies/,"girls"],[/family|kids|children/,"family"],[/couple|honeymoon|romantic|anniversary/,"couple"],[/\bsolo\b|just me|alone/,"solo"],[/business|corporate|team/,"business"]];
-  for (const [re,type] of types) { if (t.match(re) && !s.groupType) { s.groupType = type; understood.push({boys:"boys trip",girls:"girls trip",family:"family trip",couple:"couple's getaway",solo:"solo trip",business:"business trip"}[type]); break; } }
-
-  const dayM = t.match(/(\d+)\s*(days?|nights?)/);
-  if (dayM) { s.numDays = parseInt(dayM[1]); understood.push(`${s.numDays} days`); }
-  if (!s.numDays && t.includes("long weekend")) { s.numDays = 3; understood.push("3 days"); }
-  else if (!s.numDays && t.includes("weekend")) { s.numDays = 2; understood.push("weekend"); }
-  if (!s.numDays && t.match(/\ba week\b/)) { s.numDays = 7; understood.push("a week"); }
-
-  const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-  for (const m of months) { const re = new RegExp(m+"\\s*(\\d{1,2})?"); const match = t.match(re); if (match && !s.dates) { s.dates = `${m.charAt(0).toUpperCase()+m.slice(1)}${match[1]?" "+match[1]:""}`; understood.push(s.dates); break; } }
-
-  const budgetPats = [/\$\s*([\d,]+)\s*k/i, /\$\s*([\d,]+)/, /([\d,]+)\s*k\b/i, /([\d,]+)\s*grand/i];
-  for (const pat of budgetPats) { const m = t.match(pat); if (m && !s.totalBudget) { let v = parseInt(m[1].replace(/,/g,"")); if(t.includes("k")&&v<1000)v*=1000; if(v>=200){s.totalBudget=v; understood.push("$"+v.toLocaleString()+" budget"); break;} } }
-
-  const intMap = {food:["food","eat","restaurant","dining","culinary","chef","dinner","brunch","foodie"],water:["boat","yacht","sailing","jet ski","water","ocean","cruise","fishing","snorkel","swim"],adventure:["adventure","thrill","explore","airboat","helicopter","safari","adrenaline"],culture:["art","culture","museum","history","gallery","street art"],wellness:["spa","wellness","relax","massage","yoga"],sport:["golf","sport","tennis"],nightlife:["nightlife","bar","club","cocktail","drink","party","drinks"],wine:["wine","champagne","tasting","vineyard"],nature:["nature","wildlife","everglades","park","hike","outdoor"]};
-  const newInterests = [];
-  Object.entries(intMap).forEach(([cat,words]) => { words.forEach(w => { if(t.includes(w) && !(s.interests||[]).includes(cat)) newInterests.push(cat); }); });
-  if (t.includes("surprise me")||t.includes("everything")||t.includes("a bit of everything")) newInterests.push(...["food","water","adventure","culture"].filter(i => !(s.interests||[]).includes(i) && !newInterests.includes(i)));
-  if (newInterests.length) { s.interests = [...(s.interests||[]), ...newInterests]; understood.push(newInterests.join(", ")); }
-
-  // Context-aware: if nothing parsed but we know what we last asked
-  if (understood.length === 0) {
-    const numM = t.match(/(\d+)/);
-    if (numM) {
-      const n = parseInt(numM[1]);
-      if (!s.groupSize && n >= 1 && n <= 30) { s.groupSize = n; understood.push(`${n} guests`); }
-      else if (!s.numDays && n >= 1 && n <= 14) { s.numDays = n; understood.push(`${n} days`); }
-      else if (!s.totalBudget) { let v = n; if(v<=50) v*=1000; if(v>=200){s.totalBudget=v; understood.push("$"+v.toLocaleString()+" budget");} }
-    }
-  }
-
-  // Figure out what's missing
-  const missing = [];
-  if (!s.destination) missing.push("destination");
-  if (!s.dates && !s.numDays) missing.push("dates");
-  if (!s.numDays) missing.push("days");
-  if (!s.groupSize) missing.push("groupSize");
-  if (!s.groupType) missing.push("groupType");
-  if (!s.totalBudget) missing.push("budget");
-  if (!(s.interests||[]).length) missing.push("interests");
-
-  // Build response
-  let reply = "";
-  const ack = understood.length > 0 ? understood.join(", ") : null;
-
-  // Can we build itinerary?
-  if (s.destination && (s.numDays||s.dates) && s.groupSize && (s.interests||[]).length) {
-    const city = s.destination;
-    const days = s.numDays || 4;
-    const gs = s.groupSize;
-    const budget = s.totalBudget || 99999;
-    const groupLabel = s.groupType ? {boys:"boys trip",girls:"girls trip",family:"family vacation",couple:"couple's getaway",solo:"solo adventure",business:"corporate retreat"}[s.groupType]||"trip" : "trip";
-    const cityName = city.charAt(0).toUpperCase()+city.slice(1);
-
-    const matching = EXP.filter(e => e.city===city||e.region.includes(city))
-      .map(e => { let score=0; (s.interests||[]).forEach(i=>{e.tags.forEach(tag=>{if(tag.includes(i)||i.includes(tag))score+=3;});}); if(gs<=(e.maxGuests||99))score+=2; score+=e.rating*0.5; return {...e,score}; })
-      .filter(e=>e.score>0).sort((a,b)=>b.score-a.score);
-
-    const itinerary=[]; const usedIds=new Set(); let cost=0;
-    const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-    for (let d=0;d<days;d++) {
-      const dayExps=[]; const dayLabel=dayNames[(4+d)%7];
-      const slots=[{time:"8:00 AM"},{time:"12:00 PM"},{time:"4:00 PM"},{time:"7:00 PM"}];
-      for (const slot of slots) {
-        if(dayExps.length>=2)break;
-        const c=matching.find(e=>!usedIds.has(e.id)&&cost+(e.price*gs)<=budget);
-        if(c){const notes={yacht:["Perfect way to see the coastline","Nothing beats the water"],dining:["The food here is exceptional","Best kept secret in town"],fishing:["Early start but worth it","Captain knows the spots"],adventure:["Get the adrenaline going","Everyone talks about this one"],cultural:["A different pace — enriching","See the city like a local"],spa:["You'll need this after the action","World-class relaxation"],golf:["Bucket list course","Bring your A-game"],wine:["Tastings on another level","Perfect afternoon"]};const note=(notes[c.cat]||["Great experience"])[d%(notes[c.cat]||[""]).length];dayExps.push({id:c.id,time:slot.time,note});usedIds.add(c.id);cost+=c.price*gs;}
-      }
-      if(dayExps.length) itinerary.push({day:d+1,date:`2026-03-${String(15+d).padStart(2,"0")}`,dayLabel,experiences:dayExps});
-    }
-
-    const budgetNote = s.totalBudget ? (cost<=s.totalBudget?" Right within your budget.":" I stretched a bit to get you the best — swap any out.") : "";
-    reply = `Love it — your ${days}-day ${groupLabel} to ${cityName} for ${gs} is ready. ${fmt(cost)} total.${budgetNote} Switching you over to your itinerary now.`;
-
-    const infoTag = `|||INFO:${JSON.stringify(s)}|||`;
-    const recsTag = `|||RECS:[${[...usedIds].join(",")}]|||`;
-    const itinTag = `|||ITINERARY:${JSON.stringify(itinerary)}|||`;
-    return { reply: reply + " " + infoTag + " " + recsTag + " " + itinTag + " |||NAV:ideas|||", newState: s };
-  }
-
-  // Not ready yet — ask for what's missing
-  const questions = {
-    destination: ["Where are you thinking? I've got incredible experiences in Miami, Tokyo, Amalfi, Napa, Bali, Santorini, and more.", "What destination are you dreaming about?"],
-    dates: ["When are you thinking of going?", "What dates work for you?"],
-    days: ["How many days are you thinking?", "How long is the trip?"],
-    groupSize: ["How many of you are going?", "How big is the group?"],
-    groupType: ["What kind of trip is it — boys trip, girls trip, family, couple's getaway?", "Is this a boys trip, family vacation, couple's getaway...?"],
-    budget: ["What's your total experience budget for the whole group?", "Roughly how much are you looking to spend on experiences total?"],
-    interests: ["What are you into — water sports, food, nightlife, adventure, culture, wellness?", "What kind of experiences sound fun — boats, food tours, nightlife, adventure?"],
-  };
-
-  if (!s.destination) {
-    reply = ack ? `Nice — ${ack}. But first, where are you headed?` : (questions.destination[Math.floor(Math.random()*2)]);
-  } else if (missing.length > 0) {
-    const next = missing.find(m => m !== "destination");
-    const q = questions[next] ? questions[next][Math.floor(Math.random()*2)] : "Tell me more about what you're looking for.";
-    if (ack) {
-      reply = `${ack} — noted. ${q}`;
-    } else {
-      // They said something we didn't understand — be graceful
-      reply = `Got it! ${q}`;
-    }
-  }
-
-  const infoTag = `|||INFO:${JSON.stringify(s)}|||`;
-  return { reply: reply + " " + infoTag, newState: s };
-}
-
-/* ═══ PERSISTENT MEMORY LAYER ═══
-   Architecture:
-   1. sessionId — unique per conversation, stored in storage
-   2. messageHistory — full chat log persisted to storage, restored on refresh
-   3. userFacts — long-term extracted facts (destination, group size, etc.) persisted separately
-   4. Every API call sends: system prompt + userFacts summary + last N messages (token window)
-   5. Local fallback reads from same persistent state — never loses context
-*/
-
-const SESSION_KEY = "eleve-session";
-const HISTORY_KEY = "eleve-history";
-const FACTS_KEY = "eleve-facts";
-const MSGS_KEY = "eleve-msgs";
-const MAX_HISTORY_MESSAGES = 30; // sliding window for token safety (~800 tokens per exchange)
-
-function generateSessionId() {
-  return "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-}
-
-// Build the message array sent to Claude — system facts injected as first user context
-function buildAPIMessages(history, userFacts) {
-  // Trim to last N messages to stay within token limits
-  const trimmed = history.length > MAX_HISTORY_MESSAGES
-    ? history.slice(-MAX_HISTORY_MESSAGES)
-    : [...history];
-
-  // If we have extracted facts, prepend a context summary so Claude never forgets
-  if (Object.keys(userFacts).length > 0) {
-    const factSummary = Object.entries(userFacts)
-      .filter(([_, v]) => v !== null && v !== undefined)
-      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
-      .join("\n");
-
-    // Inject as a system-level context block at the start
-    // This ensures even if old messages are trimmed, facts persist
-    if (factSummary && trimmed.length > 0 && trimmed[0].role === "user") {
-      trimmed[0] = {
-        role: "user",
-        content: `[Context — what I've told you so far: ${factSummary}]\n\n${trimmed[0].content}`,
-      };
-    }
-  }
-
-  return trimmed;
-}
-
-/* ═══ TAB 1: AI CHAT ═══ */
+/* ═══ TAB 1: AI CHAT (placeholder with custom message) ═══ */
 function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary, setTab }) {
-  const [msgs, setMsgs] = useState([]);           // UI messages (what user sees)
-  const [history, setHistory] = useState([]);       // API message history (role/content pairs)
-  const [userFacts, setUserFacts] = useState({});   // Long-term extracted facts
-  const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
   const [det, setDet] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const [tripState, setTripState] = useState({});
-  const [apiWorks, setApiWorks] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
-  const end = useRef(null);
-  const taRef = useRef(null);
-
-  // ─── STEP 1: Restore persisted session on mount ───
-  useEffect(() => {
-    if (loaded) return;
-    (async () => {
-      try {
-        // Try to restore existing session
-        const savedSession = await window.storage.get(SESSION_KEY);
-        const savedHistory = await window.storage.get(HISTORY_KEY);
-        const savedFacts = await window.storage.get(FACTS_KEY);
-        const savedMsgs = await window.storage.get(MSGS_KEY);
-
-        if (savedSession?.value && savedHistory?.value && savedMsgs?.value) {
-          // Restore everything
-          setSessionId(savedSession.value);
-          setHistory(JSON.parse(savedHistory.value));
-          setMsgs(JSON.parse(savedMsgs.value));
-          if (savedFacts?.value) {
-            const facts = JSON.parse(savedFacts.value);
-            setUserFacts(facts);
-            setTripState(facts);
-            // Sync to parent userInfo
-            setUserInfo(prev => {
-              const n = { ...prev };
-              if (facts.destination) n.cities = [facts.destination];
-              if (facts.numDays) n.numDays = facts.numDays;
-              if (facts.groupSize) n.groupSize = facts.groupSize;
-              if (facts.groupType) n.groupType = facts.groupType;
-              if (facts.totalBudget) n.totalBudget = facts.totalBudget;
-              if (facts.dates) n.dates = facts.dates;
-              if (facts.interests) n.interests = facts.interests;
-              return n;
-            });
-          }
-          setLoaded(true);
-          return;
-        }
-      } catch(e) {
-        // Storage not available or empty — fresh start
-      }
-
-      // No saved session — create new one
-      const newId = generateSessionId();
-      setSessionId(newId);
-      try { await window.storage.set(SESSION_KEY, newId); } catch(e) {}
-
-      // Show initial greeting
-      const greeting = "Welcome to Élevé — I'll craft you the perfect trip. Where are you headed?";
-      const initHistory = [
-        { role: "user", content: "Hi, I'd like to plan a trip." },
-        { role: "assistant", content: greeting }
-      ];
-      setHistory(initHistory);
-      setMsgs([{ f: "bot", t: greeting }]);
-      persist(initHistory, [{ f: "bot", t: greeting }], {});
-      setLoaded(true);
-    })();
-  }, [loaded]);
-
-  // ─── STEP 2: Persist to storage after every change ───
-  const persist = async (h, m, facts) => {
-    try {
-      await window.storage.set(HISTORY_KEY, JSON.stringify(h));
-      await window.storage.set(MSGS_KEY, JSON.stringify(m));
-      await window.storage.set(FACTS_KEY, JSON.stringify(facts));
-    } catch(e) { /* storage unavailable — session-only memory still works */ }
-  };
-
-  useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
-
-  // ─── STEP 3: Extract facts from AI response and merge ───
-  const updateFacts = (infoUpdate) => {
-    if (!infoUpdate) return;
-    setUserFacts(prev => {
-      const n = { ...prev };
-      if (infoUpdate.destination) n.destination = infoUpdate.destination;
-      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
-      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
-      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
-      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
-      if (infoUpdate.dates) n.dates = infoUpdate.dates;
-      if (infoUpdate.interests) n.interests = infoUpdate.interests;
-      return n;
-    });
-    setUserInfo(prev => {
-      const n = { ...prev };
-      if (infoUpdate.destination) n.cities = [infoUpdate.destination];
-      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
-      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
-      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
-      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
-      if (infoUpdate.dates) n.dates = infoUpdate.dates;
-      if (infoUpdate.interests) n.interests = infoUpdate.interests;
-      return n;
-    });
-    setTripState(prev => {
-      const n = { ...prev };
-      if (infoUpdate.destination) n.destination = infoUpdate.destination;
-      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
-      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
-      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
-      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
-      if (infoUpdate.dates) n.dates = infoUpdate.dates;
-      if (infoUpdate.interests) n.interests = infoUpdate.interests;
-      return n;
-    });
-  };
-
-  // ─── STEP 4: Process AI response (shared by API + local) ───
-  const processResponse = (raw, newHistory, newMsgs) => {
-    const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
-
-    updateFacts(infoUpdate);
-
-    // Get latest facts for persistence
-    const latestFacts = { ...userFacts };
-    if (infoUpdate) {
-      if (infoUpdate.destination) latestFacts.destination = infoUpdate.destination;
-      if (infoUpdate.numDays) latestFacts.numDays = infoUpdate.numDays;
-      if (infoUpdate.groupSize) latestFacts.groupSize = infoUpdate.groupSize;
-      if (infoUpdate.groupType) latestFacts.groupType = infoUpdate.groupType;
-      if (infoUpdate.totalBudget) latestFacts.totalBudget = infoUpdate.totalBudget;
-      if (infoUpdate.dates) latestFacts.dates = infoUpdate.dates;
-      if (infoUpdate.interests) latestFacts.interests = infoUpdate.interests;
-    }
-
-    if (recIds.length > 0) {
-      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-      setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...recs.filter(r => !ex.includes(r.id))]; });
-      setTimeout(() => {
-        setMsgs(p => {
-          const updated = [...p, { f: "bot", t: "__RECS__", recs }];
-          persist(newHistory, updated, latestFacts);
-          return updated;
-        });
-      }, 400);
-    }
-
-    if (itinerary) {
-      setAiItinerary(itinerary);
-      const itinExps = itinerary.flatMap(d => d.experiences.map(e => e.id)).map(id => EXP.find(e => e.id === id)).filter(Boolean);
-      setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...itinExps.filter(r => !ex.includes(r.id))]; });
-    }
-
-    const finalMsgs = [...newMsgs, { f: "bot", t: displayText }];
-    setHistory(newHistory);
-    setMsgs(finalMsgs);
-    setThinking(false);
-
-    // Persist everything
-    persist(newHistory, finalMsgs, latestFacts);
-
-    if (navTo && setTab) setTimeout(() => setTab(navTo), 2000);
-  };
-
-  // ─── STEP 5: Send message ───
-  const send = async () => {
-    const text = input.trim();
-    if (!text || thinking) return;
-    setInput(""); if (taRef.current) taRef.current.style.height = "auto";
-
-    const newMsgs = [...msgs, { f: "user", t: text }];
-    setMsgs(newMsgs);
-    setThinking(true);
-
-    const userMsg = { role: "user", content: text };
-    const newHistory = [...history, userMsg];
-
-    // ─── API PATH: send full history with facts context ───
-    if (apiWorks !== false) {
-      try {
-        const apiMessages = buildAPIMessages(newHistory, userFacts);
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 800,
-            system: CONCIERGE_PROMPT,
-            messages: apiMessages,
-          }),
-        });
-        if (!res.ok) throw new Error("nope");
-        const data = await res.json();
-        const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
-        if (!raw) throw new Error("empty");
-
-        const fullHistory = [...newHistory, { role: "assistant", content: raw }];
-        setApiWorks(true);
-        processResponse(raw, fullHistory, newMsgs);
-        return;
-      } catch(e) {
-        setApiWorks(false);
-      }
-    }
-
-    // ─── LOCAL FALLBACK: uses same persistent tripState ───
-    const { reply, newState } = localReply(text, tripState);
-    setTripState(newState);
-    const fullHistory = [...newHistory, { role: "assistant", content: reply }];
-    processResponse(reply, fullHistory, newMsgs);
-  };
-
-  // ─── Reset conversation ───
-  const resetChat = async () => {
-    try {
-      await window.storage.delete(SESSION_KEY);
-      await window.storage.delete(HISTORY_KEY);
-      await window.storage.delete(FACTS_KEY);
-      await window.storage.delete(MSGS_KEY);
-    } catch(e) {}
-    setSessionId(generateSessionId());
-    setHistory([]);
-    setMsgs([]);
-    setUserFacts({});
-    setTripState({});
-    setLoaded(false);
-    setApiWorks(null);
-  };
-
   if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
 
   return (
@@ -575,66 +118,26 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
           <span style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: "#fff" }}>É</span>
         </div>
         <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: C.text }}>Élevé</div></div>
-        <button onClick={resetChat} title="New conversation" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textTer} strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-        </button>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: C.success }} /><span style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>Online</span></div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px 8px" }}>
-        {msgs.map((m, i) => {
-          if (m.t === "__RECS__" && m.recs) return (
-            <div key={i} style={{ marginBottom: 12, padding: "4px 16px", background: C.surface, borderRadius: 16, border: `1px solid ${C.border}`, animation: "fadeUp 0.3s ease" }}>
-              {m.recs.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
-            </div>
-          );
-          const isBot = m.f === "bot";
-          return (
-            <div key={i} style={{ display: "flex", justifyContent: isBot ? "flex-start" : "flex-end", marginBottom: 12, animation: "fadeUp 0.25s ease" }}>
-              <div style={{
-                maxWidth: "85%", padding: "12px 16px",
-                borderRadius: isBot ? "2px 18px 18px 18px" : "18px 18px 2px 18px",
-                background: isBot ? C.surface : C.accent,
-                color: isBot ? C.text : "#fff",
-                fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap",
-                border: isBot ? `1px solid ${C.border}` : "none",
-                boxShadow: isBot ? "0 1px 3px rgba(0,0,0,0.04)" : "none",
-              }}>{m.t}</div>
-            </div>
-          );
-        })}
-        {thinking && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ padding: "14px 18px", borderRadius: "2px 18px 18px 18px", background: C.surface, border: `1px solid ${C.border}`, display: "inline-flex", gap: 5 }}>
-              {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.textTer, animation: `pulse 1.4s ease ${i*0.16}s infinite` }} />)}
-            </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px 8px", display: "flex", alignItems: "flex-start" }}>
+        <div style={{ maxWidth: "92%", padding: "16px 18px", borderRadius: "2px 18px 18px 18px", background: C.surface, border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.7, color: C.text }}>
+            <p style={{ margin: "0 0 14px" }}>Hello Mr. Anthony Barrios, this is your conscience speaking. I want you to know that AI is so powerful that I can read your dirty little mind.</p>
+            <p style={{ margin: "0 0 14px" }}>On a serious note, the chatbox requires a plug in which costs 30 bucks a month. Once you approve I'll pay it and we can create this part of the app.</p>
+            <p style={{ margin: 0 }}>I've used examples for events and shit which you can add to your trip and see your itinerary for each day (also used a made up trip for that one since you can't tell the AI when you're going).</p>
           </div>
-        )}
-        <div ref={end} />
+        </div>
       </div>
 
       <div style={{ borderTop: `1px solid ${C.border}`, padding: "12px 16px 16px", background: C.surface, display: "flex", gap: 10, alignItems: "flex-end" }}>
-        <textarea ref={taRef} value={input}
-          onChange={e => { setInput(e.target.value); const el = taRef.current; if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,120)+"px";} }}
-          onKeyDown={e => { if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} }}
-          placeholder="Message Élevé..." rows={1}
-          style={{ flex:1,padding:"10px 16px",borderRadius:20,border:`1.5px solid ${C.border}`,fontFamily:"var(--fb)",fontSize:14,outline:"none",resize:"none",lineHeight:1.5,maxHeight:120,background:C.bg,color:C.text }}
-          onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border} />
-        <button onClick={send} disabled={!input.trim()||thinking} style={{
-          width:40,height:40,borderRadius:"50%",border:"none",
-          background:input.trim()&&!thinking?C.accent:C.surfaceAlt,
-          color:input.trim()&&!thinking?"#fff":C.textTer,
-          cursor:input.trim()&&!thinking?"pointer":"not-allowed",
-          display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
-        }}>{ic.send()}</button>
+        <div style={{ flex: 1, padding: "10px 16px", borderRadius: 20, border: `1.5px solid ${C.border}`, fontFamily: "var(--fb)", fontSize: 14, color: C.textTer, background: C.bg }}>AI chat coming soon...</div>
       </div>
-      <style>{`@keyframes pulse{0%,80%,100%{transform:scale(0.6);opacity:0.3}40%{transform:scale(1);opacity:1}}@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 }
 
-
-/* ═══ TAB 1: AI CHAT ═══ */
 function CCard({ exp, onClick, onAdd, added, compact }) {
   if (!compact) return null;
   return (
@@ -650,11 +153,31 @@ function CCard({ exp, onClick, onAdd, added, compact }) {
   );
 }
 
-function Detail({ exp, onBack, onAdd, added, userInfo }) {
+
+function Detail({ exp, onBack, onAdd, added, userInfo, onBookSlot }) {
   const avail = exp.availability?.slice(0, 14) || [];
   const groupFits = !userInfo.groupSize || userInfo.groupSize <= (exp.maxGuests || 99);
   const [selDate, setSelDate] = useState(null);
+  const [booked, setBooked] = useState(null); // { dateIdx, slotIdx } confirmation
   const selDay = selDate !== null ? avail[selDate] : null;
+
+  // Trip days for booking
+  const tripDays = [
+    { key: "2026-03-12", label: "Thu, Mar 12", short: "Day 1" },
+    { key: "2026-03-13", label: "Fri, Mar 13", short: "Day 2" },
+    { key: "2026-03-14", label: "Sat, Mar 14", short: "Day 3" },
+  ];
+
+  const handleBook = (ts, dateStr) => {
+    // Add to trip with the specific time slot info
+    if (onBookSlot) {
+      onBookSlot(exp, dateStr, ts.time);
+    } else {
+      onAdd(exp);
+    }
+    setBooked(`${dateStr}-${ts.time}`);
+    setTimeout(() => setBooked(null), 2000);
+  };
 
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
@@ -668,53 +191,74 @@ function Detail({ exp, onBack, onAdd, added, userInfo }) {
         <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 16 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests} guests</span></div>
 
-        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds the max capacity of {exp.maxGuests}. You may need to book multiple sessions.</div>}
+        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds max capacity of {exp.maxGuests}.</div>}
 
-        {/* Availability — date row + expandable time slots */}
+        {/* ─── AVAILABILITY: Date selector ─── */}
         <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
           <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>{ic.cal()} Select a date & time</div>
           <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
             {avail.map((slot, i) => {
               const d = new Date(slot.date + "T12:00:00");
               const dayN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+              const mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
               const totalSpots = slot.timeSlots.reduce((s, ts) => s + ts.spotsAvailable, 0);
               const hasSpots = totalSpots > 0;
               const isSel = selDate === i;
               return (
-                <button key={i} onClick={() => hasSpots && setSelDate(isSel ? null : i)} style={{ minWidth: 56, padding: "8px 6px", borderRadius: 12, textAlign: "center", cursor: hasSpots ? "pointer" : "default", border: isSel ? `2px solid ${C.accent}` : `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: isSel ? C.accentLight : hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.5, transition: "all 0.15s" }}>
+                <button key={i} onClick={() => hasSpots && setSelDate(isSel ? null : i)} style={{ minWidth: 58, padding: "8px 6px", borderRadius: 12, textAlign: "center", cursor: hasSpots ? "pointer" : "default", border: isSel ? `2px solid ${C.accent}` : `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: isSel ? C.accentLight : hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.4, transition: "all 0.15s" }}>
                   <div style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 600, color: isSel ? C.accent : C.textSec, textTransform: "uppercase" }}>{dayN}</div>
-                  <div style={{ fontFamily: "var(--fh)", fontSize: 17, fontWeight: 700, color: isSel ? C.accent : hasSpots ? C.text : "#DC2626", marginTop: 2 }}>{d.getDate()}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: isSel ? C.accent : hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 2 }}>{hasSpots ? `${slot.timeSlots.length} times` : "Full"}</div>
+                  <div style={{ fontFamily: "var(--fh)", fontSize: 17, fontWeight: 700, color: isSel ? C.accent : hasSpots ? C.text : "#DC2626", marginTop: 1 }}>{d.getDate()}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 8, color: isSel ? C.accent : C.textSec, marginTop: 1 }}>{mn}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: isSel ? C.accent : hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 3 }}>{hasSpots ? `${slot.timeSlots.length} times` : "Full"}</div>
                 </button>
               );
             })}
           </div>
 
+          {/* ─── HOURLY TIME SLOTS for selected date ─── */}
           {selDay && (
-            <div style={{ marginTop: 12, padding: 14, background: C.bg, borderRadius: 14, border: `1px solid ${C.border}`, animation: "fadeUp 0.2s ease" }}>
-              <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 10 }}>
-                {(() => { const d = new Date(selDay.date + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }); })()}
-                {selDay.priceModifier > 1 && <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 8, background: "#FEF3C7", fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: "#B45309" }}>Weekend rate</span>}
+            <div style={{ marginTop: 14, animation: "fadeUp 0.2s ease" }}>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>{(() => { const d = new Date(selDay.date + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" }); })()}</span>
+                {selDay.priceModifier > 1 && <span style={{ padding: "3px 10px", borderRadius: 8, background: "#FEF3C7", fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: "#B45309" }}>Weekend rate (+15%)</span>}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {selDay.timeSlots.map((ts, j) => {
                   const hasRoom = ts.spotsAvailable > 0;
                   const groupOk = !userInfo.groupSize || userInfo.groupSize <= ts.spotsAvailable;
                   const price = Math.round(exp.price * (selDay.priceModifier || 1));
+                  const isBooked = booked === `${selDay.date}-${ts.time}`;
                   return (
-                    <div key={j} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 12, border: `1px solid ${hasRoom ? C.border : "#FECACA"}`, background: C.surface, opacity: hasRoom ? 1 : 0.5 }}>
-                      <div style={{ flex: "0 0 auto", minWidth: 70 }}>
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 15, fontWeight: 700, color: hasRoom ? C.text : "#DC2626" }}>{ts.time}</div>
+                    <div key={j} style={{ padding: "12px 14px", borderRadius: 14, border: `1px solid ${isBooked ? C.success : hasRoom ? C.border : "#FECACA"}`, background: isBooked ? C.successBg : C.surface, opacity: hasRoom ? 1 : 0.45, transition: "all 0.2s" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        {/* Time */}
+                        <div style={{ minWidth: 72 }}>
+                          <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: isBooked ? C.success : hasRoom ? C.text : "#DC2626" }}>{ts.time}</div>
+                        </div>
+                        {/* Spots + price */}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: hasRoom ? C.success : "#DC2626", fontWeight: 600 }}>
+                            {hasRoom ? `${ts.spotsAvailable} of ${ts.spotsTotal} spots open` : "Fully booked"}
+                          </div>
+                          <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text, marginTop: 2 }}>{fmt(price)}<span style={{ fontWeight: 400, fontSize: 11, color: C.textSec }}> /person</span></div>
+                        </div>
+                        {/* Book button */}
+                        {hasRoom && !isBooked && (
+                          <button onClick={() => handleBook(ts, selDay.date)} style={{
+                            padding: "8px 16px", borderRadius: 20, border: "none",
+                            background: groupOk ? C.accent : C.surfaceAlt,
+                            color: groupOk ? "#fff" : C.textSec,
+                            fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600,
+                            cursor: groupOk ? "pointer" : "not-allowed", flexShrink: 0,
+                          }}>Add to trip</button>
+                        )}
+                        {isBooked && (
+                          <span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.success, display: "flex", alignItems: "center", gap: 4 }}>{ic.chk()} Added</span>
+                        )}
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: hasRoom ? C.success : "#DC2626", fontWeight: 600 }}>{hasRoom ? `${ts.spotsAvailable} of ${ts.spotsTotal} spots` : "Fully booked"}</div>
-                        {hasRoom && !groupOk && userInfo.groupSize && <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "#B45309", marginTop: 2 }}>Need {userInfo.groupSize}, only {ts.spotsAvailable} left</div>}
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 700, color: C.text }}>{fmt(price)}</div>
-                        <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>/person</div>
-                      </div>
-                      {hasRoom && <button style={{ padding: "7px 14px", borderRadius: 20, border: "none", background: groupOk ? C.accent : C.surfaceAlt, color: groupOk ? "#fff" : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, cursor: groupOk ? "pointer" : "not-allowed", flexShrink: 0 }}>{groupOk ? "Book" : "N/A"}</button>}
+                      {hasRoom && !groupOk && userInfo.groupSize && (
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "#B45309", marginTop: 6 }}>Need {userInfo.groupSize} spots — only {ts.spotsAvailable} available</div>
+                      )}
                     </div>
                   );
                 })}
@@ -723,6 +267,7 @@ function Detail({ exp, onBack, onAdd, added, userInfo }) {
           )}
         </div>
 
+        {/* Host */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${C.border}`, marginBottom: 18 }}>
           <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
           <div><div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600 }}>Hosted by {exp.host}</div></div>
@@ -740,7 +285,6 @@ function Detail({ exp, onBack, onAdd, added, userInfo }) {
   );
 }
 
-/* ═══ TAB 2: IDEAS (Dual mode) ═══ */
 function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
   const [mode, setMode] = useState("all"); // "all" or "curated"
   const [cat, setCat] = useState("all");
@@ -914,80 +458,103 @@ function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
 }
 
 /* ═══ TAB 3: YOUR TRIP ═══ */
+
+/* ═══ TAB 3: YOUR TRIP ═══ */
 function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinerary }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [det, setDet] = useState(null);
-  const dest = userInfo.cities?.length ? userInfo.cities[0].charAt(0).toUpperCase() + userInfo.cities[0].slice(1) : null;
-  const numDays = userInfo.numDays || 5;
-  const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  const startDayIdx = 3;
-  const dayLabels = Array.from({ length: numDays }, (_, i) => ({ key: `day-${i}`, short: dayNames[(startDayIdx+i)%7], num: i+1 }));
-  const getExpForDay = dk => trip.filter(e => tripDays[e.id] === dk);
+
+  // Fixed trip dates: March 12-14, 2026
+  const TRIP_DATES = [
+    { key: "day-0", date: "2026-03-12", label: "March 12", short: "Thu", num: 1, full: "Thursday, March 12" },
+    { key: "day-1", date: "2026-03-13", label: "March 13", short: "Fri", num: 2, full: "Friday, March 13" },
+    { key: "day-2", date: "2026-03-14", label: "March 14", short: "Sat", num: 3, full: "Saturday, March 14" },
+  ];
+
+  // Get experiences for a specific day, sorted by time
+  const getExpForDay = (dayKey) => {
+    return trip
+      .filter(e => tripDays[e.id]?.day === dayKey)
+      .sort((a, b) => {
+        const tA = tripDays[a.id]?.time || "12:00 PM";
+        const tB = tripDays[b.id]?.time || "12:00 PM";
+        const toH = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h*60+parseInt(m[2]); };
+        return toH(tA) - toH(tB);
+      });
+  };
+
   const unassigned = trip.filter(e => !tripDays[e.id]);
+  const totalCost = trip.reduce((s, e) => s + e.price, 0);
+  const assignedCount = trip.filter(e => tripDays[e.id]).length;
 
   if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
 
+  // ─── DAY DETAIL VIEW ───
   if (selectedDay !== null) {
-    const day = dayLabels[selectedDay];
+    const day = TRIP_DATES[selectedDay];
     const dayExps = getExpForDay(day.key);
     return (
       <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
         <div style={{ padding: "16px 20px", background: C.surface, borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => setSelectedDay(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>{ic.back()}</button>
           <div>
-            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{day.short} — Day {day.num}</div>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""}</div>
+            <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{day.full}</div>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>{dayExps.length} experience{dayExps.length!==1?"s":""} scheduled</div>
           </div>
         </div>
+
         {dayExps.length === 0 ? (
           <div style={{ padding: "60px 20px", textAlign: "center" }}>
             <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📅</div>
-            <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nothing planned</div>
-            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Assign experiences to this day from the list below.</p>
+            <div style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 600, color: C.text, marginBottom: 8 }}>Nothing scheduled yet</div>
+            <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Add experiences from the Ideas tab and assign them to this day.</p>
           </div>
         ) : (
-          <div style={{ padding: "16px 20px" }}>
-            {dayExps.sort((a,b) => {
-              const getH = t => { const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i); if(!m) return 12; let h=parseInt(m[1]); if(m[3].toUpperCase()==="PM"&&h!==12)h+=12; if(m[3].toUpperCase()==="AM"&&h===12)h=0; return h; };
-              return getH(a.time) - getH(b.time);
-            }).map((exp, idx) => (
-              <div key={exp.id} style={{ display: "flex", gap: 16 }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20, flexShrink: 0 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: C.accent, marginTop: 18, flexShrink: 0 }} />
-                  {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: C.border, minHeight: 40 }} />}
-                </div>
-                <div onClick={() => setDet(exp)} style={{ flex: 1, background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 12, cursor: "pointer" }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <img src={exp.img} alt="" style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover" }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.accent, textTransform: "uppercase" }}>{exp.time}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 2 }}>{exp.title}</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
+          <div style={{ padding: "20px" }}>
+            {/* Timeline */}
+            {dayExps.map((exp, idx) => {
+              const slot = tripDays[exp.id];
+              return (
+                <div key={exp.id} style={{ display: "flex", gap: 16 }}>
+                  {/* Timeline connector */}
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 24, flexShrink: 0 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: C.accent, marginTop: 20, flexShrink: 0, border: "3px solid " + C.accentLight }} />
+                    {idx < dayExps.length - 1 && <div style={{ width: 2, flex: 1, background: `linear-gradient(to bottom, ${C.accent}40, ${C.border})`, minHeight: 50 }} />}
+                  </div>
+                  {/* Event card */}
+                  <div onClick={() => setDet(exp)} style={{ flex: 1, background: C.surface, borderRadius: 16, border: `1px solid ${C.border}`, marginBottom: 16, cursor: "pointer", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
+                    <div style={{ display: "flex", gap: 14, padding: 14, alignItems: "center" }}>
+                      <img src={exp.img} alt="" style={{ width: 60, height: 60, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 700, color: C.accent, textTransform: "uppercase", letterSpacing: "0.03em" }}>{slot?.time || exp.time}</div>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.duration} · {fmt(exp.price)}/pp</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, padding: "0 14px 12px" }}>
+                      <button onClick={e => { e.stopPropagation(); setTripDays(p => { const n={...p}; delete n[exp.id]; return n; }); }} style={{ padding: "5px 14px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: C.textSec }}>Unschedule</button>
+                      <button onClick={e => { e.stopPropagation(); onRm(exp.id); }} style={{ padding: "5px 14px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: "#e11d48" }}>Remove</button>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                    <button onClick={e => { e.stopPropagation(); onRm(exp.id); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: "#e11d48" }}>Remove</button>
-                    <button onClick={e => { e.stopPropagation(); setTripDays(p => { const n={...p}; delete n[exp.id]; return n; }); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontFamily: "var(--fb)", fontWeight: 600, cursor: "pointer", border: `1px solid ${C.border}`, background: C.surface, color: C.textSec }}>Unassign</button>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
     );
   }
 
+  // ─── MAIN TRIP VIEW ───
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+      {/* Header */}
       <div style={{ padding: "20px", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
         <h2 style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Your Trip</h2>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>
-          {dest||"Tell the concierge where you're going"}{userInfo.dates?` · ${userInfo.dates}`:""}{userInfo.numDays?` · ${userInfo.numDays}d`:""}{userInfo.groupSize?` · ${userInfo.groupSize} guests`:""}
-        </p>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginTop: 4 }}>Miami · March 12–14, 2026 · 3 days</p>
         {trip.length > 0 && (
           <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-            {[{ l:"Experiences",v:trip.length},{l:"Total / pp",v:fmt(trip.reduce((s,e)=>s+e.price,0))},{l:"Planned",v:`${trip.filter(e=>tripDays[e.id]).length}/${trip.length}`}].map((s,i)=>(
+            {[{ l:"Experiences",v:trip.length},{l:"Total / pp",v:fmt(totalCost)},{l:"Scheduled",v:`${assignedCount}/${trip.length}`}].map((s,i)=>(
               <div key={i} style={{ flex:1,textAlign:"center",padding:"12px 0",background:C.bg,borderRadius:10 }}>
                 <div style={{ fontFamily:"var(--fh)",fontSize:18,fontWeight:700,color:C.text }}>{s.v}</div>
                 <div style={{ fontFamily:"var(--fb)",fontSize:11,color:C.textSec,marginTop:2 }}>{s.l}</div>
@@ -996,63 +563,94 @@ function TripTab({ trip, tripDays, setTripDays, onRm, userInfo, onAdd, aiItinera
           </div>
         )}
       </div>
+
       {!trip.length ? (
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, marginBottom: 16, opacity: 0.25 }}>🗺</div>
           <div style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 600, color: C.text, marginBottom: 8 }}>No experiences yet</div>
-          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Chat with your concierge or browse Ideas.</p>
+          <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Browse the Ideas tab to add experiences to your trip.</p>
         </div>
       ) : (
         <div style={{ padding: "16px 20px" }}>
-          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Itinerary</div>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(numDays,7)},1fr)`, gap: 8, marginBottom: 20 }}>
-            {dayLabels.map((day,i) => {
-              const count = getExpForDay(day.key).length;
+          {/* ─── DAY BOXES ─── */}
+          <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Your itinerary</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+            {TRIP_DATES.map((day, i) => {
+              const dayExps = getExpForDay(day.key);
+              const count = dayExps.length;
               return (
                 <button key={day.key} onClick={() => setSelectedDay(i)} style={{
-                  display:"flex",flexDirection:"column",alignItems:"center",padding:"12px 4px",borderRadius:12,cursor:"pointer",
-                  border:`1.5px solid ${count>0?C.accent:C.border}`,background:count>0?C.accentLight:C.surface,
+                  flex: 1, padding: "16px 8px", borderRadius: 16, cursor: "pointer",
+                  border: `2px solid ${count > 0 ? C.accent : C.border}`,
+                  background: count > 0 ? C.accentLight : C.surface,
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  transition: "all 0.15s",
                 }}>
-                  <span style={{ fontFamily:"var(--fb)",fontSize:10,fontWeight:600,color:C.textSec,textTransform:"uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily:"var(--fh)",fontSize:20,fontWeight:700,color:count>0?C.accent:C.text,marginTop:2 }}>{day.num}</span>
-                  {count>0&&<div style={{ display:"flex",gap:3,marginTop:4 }}>{Array.from({length:Math.min(count,4)}).map((_,j)=><div key={j} style={{ width:5,height:5,borderRadius:"50%",background:C.accent }} />)}</div>}
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.short}</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 26, fontWeight: 700, color: count > 0 ? C.accent : C.text, lineHeight: 1 }}>{day.num}</span>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>Mar {12 + i}</span>
+                  {count > 0 ? (
+                    <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
+                      {Array.from({ length: Math.min(count, 4) }).map((_, j) => <div key={j} style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent }} />)}
+                    </div>
+                  ) : (
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textTer, marginTop: 2 }}>Empty</span>
+                  )}
                 </button>
               );
             })}
           </div>
+
+          {/* ─── DAY SUMMARIES (clickable) ─── */}
+          {TRIP_DATES.map((day, i) => {
+            const dayExps = getExpForDay(day.key);
+            if (!dayExps.length) return null;
+            return (
+              <button key={day.key} onClick={() => setSelectedDay(i)} style={{ width: "100%", textAlign: "left", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 48, height: 48, borderRadius: 12, background: C.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{day.short}</span>
+                  <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.num}</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.num} — {dayExps.length} experience{dayExps.length!==1?"s":""}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 2 }}>{dayExps.map(e => e.title).join(" → ")}</div>
+                </div>
+                <div style={{ color: C.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
+              </button>
+            );
+          })}
+
+          {/* ─── UNASSIGNED EXPERIENCES ─── */}
           {unassigned.length > 0 && (
             <>
-              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Assign to a day ({unassigned.length})</div>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 20, marginBottom: 12 }}>Not yet scheduled ({unassigned.length})</div>
               {unassigned.map(exp => (
                 <div key={exp.id} style={{ background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, marginBottom: 10 }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
-                    <img src={exp.img} alt="" style={{ width: 50, height: 50, borderRadius: 8, objectFit: "cover" }} />
-                    <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text }}>{exp.title}</div><div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>{exp.duration} · {fmt(exp.price)}/pp</div></div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                    <img src={exp.img} alt="" style={{ width: 50, height: 50, borderRadius: 10, objectFit: "cover" }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.text }}>{exp.title}</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>{exp.duration} · {fmt(exp.price)}/pp</div>
+                    </div>
                     <button onClick={() => onRm(exp.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.textTer }}>✕</button>
                   </div>
-                  <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none" }}>
-                    {dayLabels.map(d => <button key={d.key} onClick={() => setTripDays(p => ({...p,[exp.id]:d.key}))} style={{ padding:"5px 12px",borderRadius:16,fontSize:11,fontFamily:"var(--fb)",fontWeight:600,cursor:"pointer",border:`1px solid ${C.border}`,background:C.surface,color:C.textSec,whiteSpace:"nowrap" }}>{d.short}</button>)}
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Add to a day:</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {TRIP_DATES.map(d => (
+                      <button key={d.key} onClick={() => setTripDays(p => ({...p, [exp.id]: { day: d.key, time: exp.time }}))} style={{
+                        flex: 1, padding: "8px 4px", borderRadius: 12, cursor: "pointer",
+                        border: `1px solid ${C.border}`, background: C.surface,
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                      }}>
+                        <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec }}>{d.short}</span>
+                        <span style={{ fontFamily: "var(--fh)", fontSize: 15, fontWeight: 700, color: C.text }}>Day {d.num}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               ))}
             </>
           )}
-          {dayLabels.map((day,i) => {
-            const de = getExpForDay(day.key); if (!de.length) return null;
-            return (
-              <button key={day.key} onClick={() => setSelectedDay(i)} style={{ width:"100%",textAlign:"left",background:C.surface,borderRadius:14,border:`1px solid ${C.border}`,padding:14,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14 }}>
-                <div style={{ width:44,height:44,borderRadius:10,background:C.accentLight,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                  <span style={{ fontFamily:"var(--fb)",fontSize:9,fontWeight:700,color:C.accent,textTransform:"uppercase" }}>{day.short}</span>
-                  <span style={{ fontFamily:"var(--fh)",fontSize:16,fontWeight:700,color:C.accent,lineHeight:1 }}>{day.num}</span>
-                </div>
-                <div style={{ flex:1,minWidth:0 }}>
-                  <div style={{ fontFamily:"var(--fb)",fontSize:14,fontWeight:600,color:C.text }}>Day {day.num}</div>
-                  <div style={{ fontFamily:"var(--fb)",fontSize:12,color:C.textSec,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{de.map(e=>e.title).join(" → ")}</div>
-                </div>
-                <div style={{ color:C.textTer,flexShrink:0 }}>{ic.arrow()}</div>
-              </button>
-            );
-          })}
         </div>
       )}
     </div>
@@ -1086,7 +684,6 @@ function Msgs() {
   );
 }
 
-/* ═══ TAB 5: PROFILE ═══ */
 function Prof({ onSwitchToHost }) {
   const mi=[{l:"Personal Information",i:"👤"},{l:"Payment Methods",i:"💳"},{l:"Saved Experiences",i:"♥"},{l:"Past Trips",i:"🗺"},{l:"Notifications",i:"🔔"},{l:"Privacy & Security",i:"🔒"},{l:"Help & Support",i:"💬"}];
   return (
@@ -1330,6 +927,13 @@ export default function App() {
 
   const add = e => { if (!trip.some(t => t.id === e.id)) setTrip(p => [...p, e]); };
   const rm = id => { setTrip(p => p.filter(t => t.id !== id)); setTripDays(p => { const n={...p}; delete n[id]; return n; }); };
+  const bookSlot = (exp, date, time) => {
+    if (!trip.some(t => t.id === exp.id)) setTrip(p => [...p, exp]);
+    // Find which trip day matches this date
+    const dayMap = { "2026-03-12": "day-0", "2026-03-13": "day-1", "2026-03-14": "day-2" };
+    const dayKey = dayMap[date] || "day-0";
+    setTripDays(p => ({ ...p, [exp.id]: { day: dayKey, time } }));
+  };
 
   if (mode === "host") return (
     <>
@@ -1346,8 +950,8 @@ export default function App() {
       <style>{`:root{--fh:'Newsreader',Georgia,serif;--fb:'DM Sans',-apple-system,sans-serif}*{margin:0;padding:0;box-sizing:border-box}body{background:#E8E4DE;-webkit-font-smoothing:antialiased}::selection{background:${C.accent};color:#fff}::-webkit-scrollbar{width:0;height:0}`}</style>
       <div style={{ height:"100vh",display:"flex",flexDirection:"column",maxWidth:480,margin:"0 auto",background:C.bg,boxShadow:"0 0 60px rgba(0,0,0,0.08)",overflow:"hidden" }}>
         <div style={{ flex:1,overflow:"hidden" }}>
-          {tab==="chat"&&<AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} setAiRecs={setAiRecs} setAiItinerary={setAiItinerary} setTab={setTab} />}
-          {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} trip={trip} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
+          {tab==="chat"&&<AIChat userInfo={userInfo} setUserInfo={setUserInfo} trip={trip} onAdd={add} onBookSlot={bookSlot} setAiRecs={setAiRecs} setAiItinerary={setAiItinerary} setTab={setTab} />}
+          {tab==="ideas"&&<Ideas userInfo={userInfo} onAdd={add} onBookSlot={bookSlot} trip={trip} aiRecs={aiRecs} aiItinerary={aiItinerary} />}
           {tab==="trip"&&<TripTab trip={trip} tripDays={tripDays} setTripDays={setTripDays} onRm={rm} userInfo={userInfo} onAdd={add} aiItinerary={aiItinerary} />}
           {tab==="messages"&&<Msgs />}
           {tab==="profile"&&<Prof onSwitchToHost={()=>setMode("host")} />}
