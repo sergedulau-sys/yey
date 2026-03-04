@@ -10,24 +10,43 @@ import { useState, useEffect, useRef, useCallback } from "react";
    For this mockup, we simulate availability windows per experience.
 */
 const generateAvailability = (expId) => {
-  // Simulate next 30 days of availability
+  // Simulate next 30 days of availability with time slots
   const slots = [];
   const today = new Date();
+  // Each experience has 2-4 possible time slots per day
+  const possibleTimes = [
+    ["8:00 AM", "11:00 AM", "2:00 PM", "5:00 PM"],
+    ["9:00 AM", "1:00 PM", "5:00 PM"],
+    ["7:00 AM", "10:00 AM", "2:00 PM", "6:00 PM"],
+    ["8:30 AM", "12:00 PM", "3:30 PM"],
+    ["6:00 AM", "10:00 AM", "2:00 PM", "6:00 PM"],
+  ];
+  const expTimes = possibleTimes[expId % possibleTimes.length];
+
   for (let d = 1; d <= 30; d++) {
     const date = new Date(today);
     date.setDate(today.getDate() + d);
     const dayOfWeek = date.getDay();
-    // Most experiences available most days, some blackout
-    if (Math.random() > 0.15) {
-      const spotsTotal = Math.floor(Math.random() * 8) + 4;
-      const spotsTaken = Math.floor(Math.random() * spotsTotal);
-      slots.push({
-        date: date.toISOString().split("T")[0],
-        dayOfWeek,
-        spotsAvailable: spotsTotal - spotsTaken,
-        spotsTotal,
-        priceModifier: dayOfWeek === 0 || dayOfWeek === 6 ? 1.15 : 1.0, // weekend surcharge
-      });
+    if (Math.random() > 0.12) {
+      const timeSlots = expTimes
+        .filter(() => Math.random() > 0.2) // some slots unavailable
+        .map(time => {
+          const spotsTotal = Math.floor(Math.random() * 6) + 4;
+          const spotsTaken = Math.floor(Math.random() * spotsTotal);
+          return {
+            time,
+            spotsAvailable: spotsTotal - spotsTaken,
+            spotsTotal,
+          };
+        });
+      if (timeSlots.length > 0) {
+        slots.push({
+          date: date.toISOString().split("T")[0],
+          dayOfWeek,
+          timeSlots,
+          priceModifier: dayOfWeek === 0 || dayOfWeek === 6 ? 1.15 : 1.0,
+        });
+      }
     }
   }
   return slots;
@@ -56,49 +75,6 @@ const CATS=[{id:"all",l:"All",i:"◈"},{id:"yacht",l:"Boating",i:"⛵"},{id:"din
 const fmt=n=>"$"+n.toLocaleString();
 
 /* ═══ SYSTEM PROMPT ═══ */
-const SYSTEM_PROMPT = `You are the Élevé concierge — a luxury travel experience curator. You help guests plan unforgettable trips.
-
-Your personality: warm, knowledgeable, confident but not stuffy. Like a well-connected friend who knows the best spots. Keep responses concise (2-4 sentences). Never use bullet points or numbered lists — keep it conversational and elegant.
-
-EXPERIENCE CATALOG:
-${EXP.map(e => `- ID:${e.id} "${e.title}" in ${e.loc} | ${e.cat} | $${e.price}/person | ${e.duration} | Starts ${e.time} | Max ${e.maxGuests} guests | Tags: ${e.tags.join(", ")}`).join("\n")}
-
-YOUR GOAL: Have a natural conversation to fully understand the guest's trip, then build them a perfect itinerary. You MUST gather ALL of this before recommending:
-
-1. **Destination** — where they're going
-2. **Exact dates** — specific start date and number of days (e.g. "March 15 for 4 days")
-3. **Group size** — exactly how many people
-4. **Group type** — couple, boys trip, girls trip, family, solo, business
-5. **Total budget** — their TOTAL budget for experiences across the whole trip for the whole group (not per person per day — the whole thing)
-6. **Interests** — what kind of experiences they want (water, food, nightlife, adventure, culture, wellness, sport, etc.)
-7. **Pace preference** — packed schedule or relaxed with free time?
-
-Ask these ONE AT A TIME conversationally. If they give multiple answers at once, acknowledge all and move to the next unknown. Be specific when asking about budget — ask for a total number for the whole group for the whole trip.
-
-WHEN YOU HAVE ALL 7 PIECES OF INFO, build a FULL DAY-BY-DAY ITINERARY. Consider:
-- Don't overlap times (a 6-hour yacht charter at 2 PM means nothing else until 8 PM)
-- Match group size to experience capacity (maxGuests)
-- Stay within total budget (price × groupSize for each experience)
-- Mix experience types across days
-- Leave some free time / meals
-- Put high-energy activities in the morning, relaxed ones in the afternoon/evening
-
-RESPONSE FORMAT — include these tags at the END of every response:
-
-When you learn new info:
-|||INFO:{"cities":["miami"],"numDays":4,"groupSize":6,"groupType":"boys","totalBudget":15000,"dates":"March 15","interests":["water","food","adventure"],"pace":"packed","startDate":"2026-03-15"}|||
-
-When recommending individual experiences:
-|||RECS:[4,6,15]|||
-
-When building a full itinerary (ONLY after you have all 7 pieces):
-|||ITINERARY:[{"day":1,"date":"2026-03-15","dayLabel":"Sat","experiences":[{"id":7,"time":"8:00 AM","note":"Start the trip with an adrenaline rush"},{"id":5,"time":"6:00 PM","note":"Wind down with an evening food tour"}]},{"day":2,"date":"2026-03-16","dayLabel":"Sun","experiences":[{"id":4,"time":"6:00 AM","note":"Early start for deep sea fishing"},{"id":6,"time":"4:00 PM","note":"Sunset yacht cruise to end the day"}]}]|||
-
-Valid groupType: couple, boys, girls, family, solo, business
-Only recommend experiences that match the destination. Be selective — quality over quantity.
-Calculate running costs in your head: each experience costs price × groupSize. Stay under totalBudget.
-
-Start by warmly greeting them and asking where they're headed.`;
 
 /* ═══ COLORS ═══ */
 const C = {
@@ -126,149 +102,167 @@ const ic={
   users:()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
 };
 
-/* ═══ CLAUDE API ═══ */
-async function callClaude(history) {
-  // Try real API first
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYSTEM_PROMPT, messages: history }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.content?.map(b => b.type === "text" ? b.text : "").join("");
-      if (text) return text;
-    }
-  } catch (e) { /* fallback below */ }
 
-  // Smart conversational fallback
-  return localConverse(history);
-}
+/* ═══ CLAUDE-POWERED CHAT ENGINE ═══ */
 
-/* ═══ LOCAL CONVERSATION ENGINE ═══ */
+const CONCIERGE_PROMPT = `You are the Élevé concierge — a luxury travel experience curator. You help guests plan unforgettable trips.
 
-/* ═══ STEP-BASED CONVERSATION ═══
-   No more NLP parsing. The bot asks one question at a time in a fixed order.
-   Whatever the user types IS the answer. Simple, reliable, unbreakable.
-*/
-const STEPS = [
-  { key: "destination", q: "Where are you headed?", parse: v => { const cityMap={miami:"miami","south beach":"miami",tokyo:"tokyo",japan:"tokyo",italy:"amalfi",amalfi:"amalfi",bali:"bali",greece:"santorini",santorini:"santorini",napa:"napa",france:"epernay",paris:"epernay",scotland:"standrews"}; const t=v.toLowerCase(); for(const[k,c]of Object.entries(cityMap)){if(t.includes(k))return c;} return null; }, fail: "I don't have experiences there yet. Try Miami, Tokyo, Amalfi, Napa, Bali, Santorini, or Épernay." },
-  { key: "dates", q: "When are you going? (e.g. March 15)", parse: v => v.trim() || null },
-  { key: "numDays", q: "How many days?", parse: v => { const m=v.match(/(\d+)/); return m ? parseInt(m[1]) : null; }, fail: "Just give me a number — like 3 or 5." },
-  { key: "groupSize", q: "How many people in your group?", parse: v => { const m=v.match(/(\d+)/); return m ? parseInt(m[1]) : null; }, fail: "Just a number — like 4 or 8." },
-  { key: "groupType", q: "What kind of trip? (boys trip, girls trip, family, couple, solo, business)", parse: v => { const t=v.toLowerCase(); const m={boys:"boys",guys:"boys",bachelor:"boys",girls:"girls",ladies:"girls",bachelorette:"girls",family:"family",couple:"couple",romantic:"couple",honeymoon:"couple",solo:"solo",alone:"solo",business:"business",corporate:"business"}; for(const[k,type]of Object.entries(m)){if(t.includes(k))return type;} return v.trim()||null; } },
-  { key: "totalBudget", q: "What's your total experience budget for the whole group? (e.g. $10k, 15000)", parse: v => { const t=v.toLowerCase().replace(/[$,\s]/g,""); let n=parseInt(t.replace(/k$/,"")); if(!n||isNaN(n))return null; if(t.endsWith("k")||n<=50) n*=1000; return n>=200?n:null; }, fail: "Give me a number — like $10k, 5000, or 15." },
-  { key: "interests", q: "What kind of experiences? (water, food, nightlife, adventure, culture, wellness, golf, or say 'surprise me')", parse: v => { const t=v.toLowerCase(); if(t.includes("surprise")||t.includes("everything")||t.includes("all")) return ["food","water","adventure","culture"]; const intMap={food:["food","eat","restaurant","dining","culinary","chef","sushi","dinner"],water:["boat","yacht","sailing","jet ski","water","ocean","cruise","fishing","snorkel","swim"],adventure:["adventure","thrill","explore","airboat","helicopter","safari","adrenaline"],culture:["art","culture","museum","history","gallery","street art"],wellness:["spa","wellness","relax","massage","meditation","yoga"],sport:["golf","sport","tennis"],nightlife:["nightlife","bar","club","cocktail","drink","party","drinks"],wine:["wine","champagne","tasting","vineyard"],nature:["nature","wildlife","everglades","park","hike","outdoor"]}; const found=[]; Object.entries(intMap).forEach(([cat,words])=>{words.forEach(w=>{if(t.includes(w)&&!found.includes(cat))found.push(cat);});}); return found.length?found:null; }, fail: "Tell me what sounds fun — water sports, food tours, nightlife, adventure, art, wellness, golf?" },
-];
+Your personality: warm, knowledgeable, confident but not stuffy. Think of a well-connected friend who knows the best spots everywhere. Keep responses SHORT — 1-3 sentences max. Be conversational, never use bullet points or numbered lists.
 
-function buildItinerary(state) {
-  const city = state.destination;
-  const days = state.numDays || 4;
-  const gs = state.groupSize || 2;
-  const budget = state.totalBudget || 99999;
-  const groupLabel = state.groupType ? {boys:"boys trip",girls:"girls trip",family:"family vacation",couple:"couple's getaway",solo:"solo adventure",business:"corporate retreat"}[state.groupType]||"trip" : "trip";
+You can talk about ANYTHING — travel tips, restaurant recs, what to pack, local culture, weather, whatever. But your core mission is to naturally gather trip details and build an itinerary.
 
-  const matching = EXP.filter(e => e.city===city||e.region.includes(city))
-    .map(e => { let score=0; (state.interests||[]).forEach(i=>{e.tags.forEach(tag=>{if(tag.includes(i)||i.includes(tag))score+=3;});}); if(gs<=(e.maxGuests||99))score+=2; score+=e.rating*0.5; return {...e,score}; })
-    .filter(e => e.score>0).sort((a,b) => b.score-a.score);
+EXPERIENCE CATALOG (these are the experiences you can book):
+${EXP.map(e => `ID:${e.id} "${e.title}" in ${e.loc} | ${e.cat} | $${e.price}/pp | ${e.duration} | Max ${e.maxGuests} guests | Tags: ${e.tags.join(", ")}`).join("\n")}
 
-  const itinerary=[]; const usedIds=new Set(); let cost=0;
-  const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+TO BUILD AN ITINERARY you need these 7 things (gather them naturally through conversation):
+1. Destination — where they're going
+2. Dates — when (e.g. "March 15")
+3. Number of days
+4. Group size — how many people
+5. Group type — couple, boys trip, girls trip, family, solo, business
+6. Total budget — total experience budget for the whole group for the whole trip
+7. Interests — what they want to do (water, food, nightlife, adventure, culture, wellness, sport)
 
-  for (let d=0;d<days;d++) {
-    const dayExps=[]; const dayLabel=dayNames[(4+d)%7];
-    const slots=[{time:"8:00 AM"},{time:"12:00 PM"},{time:"4:00 PM"},{time:"7:00 PM"}];
-    for (const slot of slots) {
-      if (dayExps.length>=2) break;
-      const c=matching.find(e=>!usedIds.has(e.id)&&cost+(e.price*gs)<=budget);
-      if (c) { 
-        const notes={yacht:["Perfect way to see the coastline","Nothing beats being on the water"],dining:["The food here is exceptional","Best-kept secret in town"],fishing:["Early start but worth it","This captain knows the spots"],adventure:["Get the adrenaline going","Everyone talks about this one"],cultural:["A different pace — really enriching","See the city like a local"],spa:["You'll need this after the action","World-class relaxation"],golf:["Bucket list course","Bring your A-game"],wine:["Tastings on another level","Perfect afternoon activity"]};
-        const note=(notes[c.cat]||["Great experience"])[d%(notes[c.cat]||[""]).length];
-        dayExps.push({id:c.id,time:slot.time,note}); usedIds.add(c.id); cost+=c.price*gs; 
-      }
-    }
-    if (dayExps.length) itinerary.push({day:d+1,date:`2026-03-${String(15+d).padStart(2,"0")}`,dayLabel,experiences:dayExps});
-  }
-  return {itinerary,usedIds:[...usedIds],totalCost:cost,groupLabel};
+Don't interrogate them. If they tell you multiple things at once, great — acknowledge them all. If they want to chat about something else, that's fine too. Gently steer back when it feels natural.
+
+EVERY response must end with this tag (include ALL fields you know so far, null for unknowns):
+|||INFO:{"destination":null,"dates":null,"numDays":null,"groupSize":null,"groupType":null,"totalBudget":null,"interests":null}|||
+
+When you have ALL 7 pieces, build a day-by-day itinerary. Rules:
+- Match experiences to the destination
+- Respect group size vs maxGuests capacity
+- Stay within total budget (price × groupSize per experience)
+- 2-3 experiences per day max
+- Mix experience types across days
+
+When you build the itinerary, add this tag:
+|||ITINERARY:[{"day":1,"date":"2026-03-15","dayLabel":"Sat","experiences":[{"id":4,"time":"8:00 AM","note":"Start the trip right"},{"id":7,"time":"4:00 PM","note":"Wind down on the water"}]}]|||
+
+Also add: |||RECS:[4,7,12]||| with the IDs you recommended.
+
+IMPORTANT: Keep your visible response SHORT and conversational. The tags are hidden from the user. Start by warmly greeting them.`;
+
+function parseAIResponse(raw) {
+  let displayText = raw;
+  let recIds = [], infoUpdate = null, itinerary = null, navTo = null;
+
+  const infoM = raw.match(/\|\|\|INFO:(.*?)\|\|\|/);
+  if (infoM) { try { infoUpdate = JSON.parse(infoM[1]); } catch(e){} displayText = displayText.replace(infoM[0], ""); }
+
+  const recM = raw.match(/\|\|\|RECS:\[(.*?)\]\|\|\|/);
+  if (recM) { recIds = recM[1].split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n)); displayText = displayText.replace(recM[0], ""); }
+
+  const itinM = raw.match(/\|\|\|ITINERARY:([\s\S]*?)\|\|\|/);
+  if (itinM) { try { itinerary = JSON.parse(itinM[1]); } catch(e){} displayText = displayText.replace(itinM[0], ""); navTo = "ideas"; }
+
+  const navM = raw.match(/\|\|\|NAV:(\w+)\|\|\|/);
+  if (navM) { navTo = navM[1]; displayText = displayText.replace(navM[0], ""); }
+
+  displayText = displayText.replace(/\|\|\|[^|]*\|\|\|/g, "").trim();
+  return { displayText, recIds, infoUpdate, itinerary, navTo };
 }
 
 /* ═══ TAB 1: AI CHAT ═══ */
 function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary, setTab }) {
-  const [msgs, setMsgs] = useState([{ f:"bot", t:"Welcome to Élevé. Where are you headed?" }]);
+  const [msgs, setMsgs] = useState([]);
+  const [history, setHistory] = useState([]);
   const [input, setInput] = useState("");
-  const [step, setStep] = useState(0); // which STEPS index we're on
-  const [tripData, setTripData] = useState({});
   const [thinking, setThinking] = useState(false);
   const [det, setDet] = useState(null);
-  const [done, setDone] = useState(false);
+  const [init, setInit] = useState(false);
   const end = useRef(null);
   const taRef = useRef(null);
 
+  // Initial greeting from Claude
+  useEffect(() => {
+    if (init) return; setInit(true);
+    setThinking(true);
+    (async () => {
+      const initMsg = [{ role: "user", content: "Hi, I'd like to plan a trip." }];
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 400, system: CONCIERGE_PROMPT, messages: initMsg }),
+        });
+        const data = await res.json();
+        const raw = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "";
+        const { displayText } = parseAIResponse(raw);
+        setHistory([...initMsg, { role: "assistant", content: raw }]);
+        setThinking(false);
+        setMsgs([{ f: "bot", t: displayText || "Welcome to Élevé! Where are you headed?" }]);
+      } catch(e) {
+        setHistory([...initMsg, { role: "assistant", content: "Welcome to Élevé — I'll help you plan something unforgettable. Where are you headed?" }]);
+        setThinking(false);
+        setMsgs([{ f: "bot", t: "Welcome to Élevé — I'll help you plan something unforgettable. Where are you headed?" }]);
+      }
+    })();
+  }, [init]);
+
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim();
-    if (!text || thinking || done) return;
+    if (!text || thinking) return;
     setInput(""); if (taRef.current) taRef.current.style.height = "auto";
     setMsgs(p => [...p, { f: "user", t: text }]);
     setThinking(true);
 
-    setTimeout(() => {
-      const currentStep = STEPS[step];
-      const parsed = currentStep.parse(text);
+    const newHistory = [...history, { role: "user", content: text }];
 
-      if (parsed === null) {
-        // Failed to parse — ask again with hint
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: currentStep.fail || `Could you rephrase that? ${currentStep.q}` }]);
-        return;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800, system: CONCIERGE_PROMPT, messages: newHistory }),
+      });
+      const data = await res.json();
+      const raw = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "";
+      const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
+
+      setHistory([...newHistory, { role: "assistant", content: raw }]);
+
+      // Update user info from Claude's structured tags
+      if (infoUpdate) {
+        setUserInfo(prev => {
+          const n = { ...prev };
+          if (infoUpdate.destination) n.cities = [infoUpdate.destination];
+          if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
+          if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
+          if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
+          if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
+          if (infoUpdate.dates) n.dates = infoUpdate.dates;
+          if (infoUpdate.interests) n.interests = infoUpdate.interests;
+          return n;
+        });
       }
 
-      // Store the answer
-      const newData = { ...tripData, [currentStep.key]: parsed };
-      setTripData(newData);
+      // Store recommendations
+      if (recIds.length > 0) {
+        const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+        setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...recs.filter(r => !ex.includes(r.id))]; });
+        setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 400);
+      }
 
-      // Update app-level userInfo
-      const infoUpdate = { ...userInfo };
-      if (currentStep.key === "destination") infoUpdate.cities = [parsed];
-      else infoUpdate[currentStep.key] = parsed;
-      setUserInfo(infoUpdate);
-
-      const nextStep = step + 1;
-
-      if (nextStep >= STEPS.length) {
-        // ALL DONE — build itinerary
-        setDone(true);
-        const { itinerary, usedIds, totalCost, groupLabel } = buildItinerary(newData);
-        const cityName = newData.destination.charAt(0).toUpperCase() + newData.destination.slice(1);
-
-        // Store recs and itinerary
-        const recs = usedIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-        setAiRecs(recs);
+      // Store itinerary
+      if (itinerary) {
         setAiItinerary(itinerary);
-        setUserInfo(prev => ({ ...prev, ...newData, cities: [newData.destination] }));
-
-        const budgetNote = newData.totalBudget && totalCost <= newData.totalBudget ? "within budget" : "";
-        setThinking(false);
-        setMsgs(p => [
-          ...p,
-          { f: "bot", t: `Your ${newData.numDays}-day ${groupLabel} to ${cityName} is ready — ${fmt(totalCost)} total${budgetNote ? ` (${budgetNote})` : ""}. Taking you to your itinerary now.` },
-        ]);
-
-        // Show rec cards
-        if (recs.length) setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 400);
-        // Auto-nav to Ideas
-        setTimeout(() => setTab("ideas"), 2200);
-      } else {
-        // Ask next question
-        setStep(nextStep);
-        const cityName = (currentStep.key === "destination") ? parsed.charAt(0).toUpperCase() + parsed.slice(1) : null;
-        const ack = cityName ? `${cityName} — great choice. ` : "Got it. ";
-        setThinking(false);
-        setMsgs(p => [...p, { f: "bot", t: `${ack}${STEPS[nextStep].q}` }]);
+        const itinExps = itinerary.flatMap(d => d.experiences.map(e => e.id)).map(id => EXP.find(e => e.id === id)).filter(Boolean);
+        setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...itinExps.filter(r => !ex.includes(r.id))]; });
       }
-    }, 400 + Math.random() * 200);
+
+      setThinking(false);
+      setMsgs(p => [...p, { f: "bot", t: displayText || "I'd love to help — tell me more about what you're looking for." }]);
+
+      // Auto-navigate
+      if (navTo && setTab) setTimeout(() => setTab(navTo), 2000);
+
+    } catch(e) {
+      // Network error — let user know gracefully
+      setHistory(newHistory); // keep their message in history for retry
+      setThinking(false);
+      setMsgs(p => [...p, { f: "bot", t: "Having a moment of trouble connecting — try sending that again." }]);
+    }
   };
 
   if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
@@ -319,86 +313,18 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
         <textarea ref={taRef} value={input}
           onChange={e => { setInput(e.target.value); const el = taRef.current; if(el){el.style.height="auto";el.style.height=Math.min(el.scrollHeight,120)+"px";} }}
           onKeyDown={e => { if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} }}
-          placeholder={done ? "Itinerary built!" : "Message Élevé..."} rows={1} disabled={done}
-          style={{ flex:1,padding:"10px 16px",borderRadius:20,border:`1.5px solid ${C.border}`,fontFamily:"var(--fb)",fontSize:14,outline:"none",resize:"none",lineHeight:1.5,maxHeight:120,background:done?"#f0ede8":C.bg,color:C.text,opacity:done?0.5:1 }}
+          placeholder="Message Élevé..." rows={1}
+          style={{ flex:1,padding:"10px 16px",borderRadius:20,border:`1.5px solid ${C.border}`,fontFamily:"var(--fb)",fontSize:14,outline:"none",resize:"none",lineHeight:1.5,maxHeight:120,background:C.bg,color:C.text }}
           onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border} />
-        <button onClick={send} disabled={!input.trim()||thinking||done} style={{
+        <button onClick={send} disabled={!input.trim()||thinking} style={{
           width:40,height:40,borderRadius:"50%",border:"none",
-          background:input.trim()&&!thinking&&!done?C.accent:C.surfaceAlt,
-          color:input.trim()&&!thinking&&!done?"#fff":C.textTer,
-          cursor:input.trim()&&!thinking&&!done?"pointer":"not-allowed",
+          background:input.trim()&&!thinking?C.accent:C.surfaceAlt,
+          color:input.trim()&&!thinking?"#fff":C.textTer,
+          cursor:input.trim()&&!thinking?"pointer":"not-allowed",
           display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
         }}>{ic.send()}</button>
       </div>
       <style>{`@keyframes pulse{0%,80%,100%{transform:scale(0.6);opacity:0.3}40%{transform:scale(1);opacity:1}}@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
-    </div>
-  );
-}
-
-function CCard({ exp, onClick, onAdd, added, compact }) {
-  if (!compact) return null;
-  return (
-    <div onClick={onClick} style={{ display: "flex", gap: 14, padding: "14px 0", borderBottom: `1px solid ${C.border}`, cursor: "pointer", alignItems: "center" }}>
-      <img src={exp.img} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.loc} · {exp.duration}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3 }}>{ic.star()}<span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text }}>{exp.rating}</span><span style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>· {fmt(exp.price)}/pp</span></div>
-      </div>
-      {onAdd && <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{added ? ic.chk() : ic.plus()}</button>}
-    </div>
-  );
-}
-
-function Detail({ exp, onBack, onAdd, added, userInfo }) {
-  const avail = exp.availability?.slice(0, 14) || [];
-  const groupFits = !userInfo.groupSize || userInfo.groupSize <= (exp.maxGuests || 99);
-  return (
-    <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
-      <div style={{ position: "relative", height: 250 }}>
-        <img src={exp.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 40%)" }} />
-        <button onClick={onBack} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.95)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic.back()}</button>
-      </div>
-      <div style={{ padding: "20px 20px 130px", background: C.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>{exp.loc}</div>
-        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 16 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests} guests</span></div>
-
-        {/* Group fit warning */}
-        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds the max capacity of {exp.maxGuests}. You may need to book multiple sessions.</div>}
-
-        {/* Availability preview */}
-        <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>{ic.cal()} Availability</div>
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
-            {avail.map((slot, i) => {
-              const d = new Date(slot.date + "T12:00:00");
-              const dayN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
-              const hasSpots = slot.spotsAvailable > 0;
-              return (
-                <div key={i} style={{ minWidth: 52, padding: "8px 6px", borderRadius: 10, textAlign: "center", border: `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.5 }}>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{dayN}</div>
-                  <div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: hasSpots ? C.text : "#DC2626", marginTop: 2 }}>{d.getDate()}</div>
-                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 2 }}>{hasSpots ? `${slot.spotsAvailable} left` : "Full"}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${C.border}`, marginBottom: 18 }}>
-          <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
-          <div><div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600 }}>Hosted by {exp.host}</div></div>
-        </div>
-        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: C.textSec, marginBottom: 20 }}>{exp.desc}</p>
-        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 12, color: C.text }}>What's included</h4>
-        {exp.inc.map((item, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 8 }}><span style={{ width: 4, height: 4, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />{item}</div>)}
-      </div>
-      <div style={{ position: "fixed", bottom: 70, left: 0, right: 0, maxWidth: 480, margin: "0 auto", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 40 }}>
-        <div><span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text }}>{fmt(exp.price)}</span><span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}> /person</span></div>
-        <button onClick={() => onAdd(exp)} style={{ padding: "11px 26px", borderRadius: 24, border: "none", background: added ? C.successBg : C.accent, color: added ? C.success : "#fff", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{added ? "✓ Added" : "Add to trip"}</button>
-      </div>
     </div>
   );
 }
