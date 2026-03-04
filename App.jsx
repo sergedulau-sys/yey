@@ -185,8 +185,10 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 400, system: CONCIERGE_PROMPT, messages: initMsg }),
         });
+        if (!res.ok) throw new Error("API " + res.status);
         const data = await res.json();
-        const raw = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "";
+        const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+        if (!raw) throw new Error("Empty response");
         const { displayText } = parseAIResponse(raw);
         setHistory([...initMsg, { role: "assistant", content: raw }]);
         setThinking(false);
@@ -216,8 +218,10 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800, system: CONCIERGE_PROMPT, messages: newHistory }),
       });
+      if (!res.ok) throw new Error("API " + res.status);
       const data = await res.json();
-      const raw = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "";
+      const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+      if (!raw) throw new Error("Empty response");
       const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
 
       setHistory([...newHistory, { role: "assistant", content: raw }]);
@@ -330,6 +334,111 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
 }
 
 /* ═══ TAB 1: AI CHAT ═══ */
+function CCard({ exp, onClick, onAdd, added, compact }) {
+  if (!compact) return null;
+  return (
+    <div onClick={onClick} style={{ display: "flex", gap: 14, padding: "14px 0", borderBottom: `1px solid ${C.border}`, cursor: "pointer", alignItems: "center" }}>
+      <img src={exp.img} alt="" style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{exp.title}</div>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.loc} · {exp.duration}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3 }}>{ic.star()}<span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text }}>{exp.rating}</span><span style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>· {fmt(exp.price)}/pp</span></div>
+      </div>
+      {onAdd && <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{added ? ic.chk() : ic.plus()}</button>}
+    </div>
+  );
+}
+
+function Detail({ exp, onBack, onAdd, added, userInfo }) {
+  const avail = exp.availability?.slice(0, 14) || [];
+  const groupFits = !userInfo.groupSize || userInfo.groupSize <= (exp.maxGuests || 99);
+  const [selDate, setSelDate] = useState(null);
+  const selDay = selDate !== null ? avail[selDate] : null;
+
+  return (
+    <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
+      <div style={{ position: "relative", height: 250 }}>
+        <img src={exp.img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 40%)" }} />
+        <button onClick={onBack} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.95)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic.back()}</button>
+      </div>
+      <div style={{ padding: "20px 20px 130px", background: C.surface, borderRadius: "20px 20px 0 0", marginTop: -20, position: "relative" }}>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>{exp.loc}</div>
+        <h2 style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text, margin: "0 0 10px", lineHeight: 1.3 }}>{exp.title}</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 16 }}>{ic.star()}<span style={{ fontWeight: 600, color: C.text }}>{exp.rating}</span><span>({exp.reviews})</span><span>·</span><span>{exp.duration}</span><span>·</span><span>Up to {exp.maxGuests} guests</span></div>
+
+        {!groupFits && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16, fontFamily: "var(--fb)", fontSize: 13, color: "#DC2626" }}>Your group of {userInfo.groupSize} exceeds the max capacity of {exp.maxGuests}. You may need to book multiple sessions.</div>}
+
+        {/* Availability — date row + expandable time slots */}
+        <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>{ic.cal()} Select a date & time</div>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 }}>
+            {avail.map((slot, i) => {
+              const d = new Date(slot.date + "T12:00:00");
+              const dayN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+              const totalSpots = slot.timeSlots.reduce((s, ts) => s + ts.spotsAvailable, 0);
+              const hasSpots = totalSpots > 0;
+              const isSel = selDate === i;
+              return (
+                <button key={i} onClick={() => hasSpots && setSelDate(isSel ? null : i)} style={{ minWidth: 56, padding: "8px 6px", borderRadius: 12, textAlign: "center", cursor: hasSpots ? "pointer" : "default", border: isSel ? `2px solid ${C.accent}` : `1px solid ${hasSpots ? C.border : "#FECACA"}`, background: isSel ? C.accentLight : hasSpots ? C.surface : "#FEF2F2", opacity: hasSpots ? 1 : 0.5, transition: "all 0.15s" }}>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 600, color: isSel ? C.accent : C.textSec, textTransform: "uppercase" }}>{dayN}</div>
+                  <div style={{ fontFamily: "var(--fh)", fontSize: 17, fontWeight: 700, color: isSel ? C.accent : hasSpots ? C.text : "#DC2626", marginTop: 2 }}>{d.getDate()}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 9, color: isSel ? C.accent : hasSpots ? C.success : "#DC2626", fontWeight: 600, marginTop: 2 }}>{hasSpots ? `${slot.timeSlots.length} times` : "Full"}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {selDay && (
+            <div style={{ marginTop: 12, padding: 14, background: C.bg, borderRadius: 14, border: `1px solid ${C.border}`, animation: "fadeUp 0.2s ease" }}>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 10 }}>
+                {(() => { const d = new Date(selDay.date + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }); })()}
+                {selDay.priceModifier > 1 && <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 8, background: "#FEF3C7", fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: "#B45309" }}>Weekend rate</span>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {selDay.timeSlots.map((ts, j) => {
+                  const hasRoom = ts.spotsAvailable > 0;
+                  const groupOk = !userInfo.groupSize || userInfo.groupSize <= ts.spotsAvailable;
+                  const price = Math.round(exp.price * (selDay.priceModifier || 1));
+                  return (
+                    <div key={j} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 12, border: `1px solid ${hasRoom ? C.border : "#FECACA"}`, background: C.surface, opacity: hasRoom ? 1 : 0.5 }}>
+                      <div style={{ flex: "0 0 auto", minWidth: 70 }}>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 15, fontWeight: 700, color: hasRoom ? C.text : "#DC2626" }}>{ts.time}</div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: hasRoom ? C.success : "#DC2626", fontWeight: 600 }}>{hasRoom ? `${ts.spotsAvailable} of ${ts.spotsTotal} spots` : "Fully booked"}</div>
+                        {hasRoom && !groupOk && userInfo.groupSize && <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "#B45309", marginTop: 2 }}>Need {userInfo.groupSize}, only {ts.spotsAvailable} left</div>}
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 700, color: C.text }}>{fmt(price)}</div>
+                        <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: C.textSec }}>/person</div>
+                      </div>
+                      {hasRoom && <button style={{ padding: "7px 14px", borderRadius: 20, border: "none", background: groupOk ? C.accent : C.surfaceAlt, color: groupOk ? "#fff" : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, cursor: groupOk ? "pointer" : "not-allowed", flexShrink: 0 }}>{groupOk ? "Book" : "N/A"}</button>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 18, borderBottom: `1px solid ${C.border}`, marginBottom: 18 }}>
+          <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fb)", fontSize: 13, fontWeight: 700, color: C.text }}>{exp.ha}</div>
+          <div><div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600 }}>Hosted by {exp.host}</div></div>
+        </div>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 14, lineHeight: 1.75, color: C.textSec, marginBottom: 20 }}>{exp.desc}</p>
+        <h4 style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, marginBottom: 12, color: C.text }}>What's included</h4>
+        {exp.inc.map((item, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fb)", fontSize: 13, color: C.textSec, marginBottom: 8 }}><span style={{ width: 4, height: 4, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />{item}</div>)}
+      </div>
+      <div style={{ position: "fixed", bottom: 70, left: 0, right: 0, maxWidth: 480, margin: "0 auto", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 40 }}>
+        <div><span style={{ fontFamily: "var(--fh)", fontSize: 22, fontWeight: 700, color: C.text }}>{fmt(exp.price)}</span><span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}> /person</span></div>
+        <button onClick={() => onAdd(exp)} style={{ padding: "11px 26px", borderRadius: 24, border: "none", background: added ? C.successBg : C.accent, color: added ? C.success : "#fff", fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{added ? "✓ Added" : "Add to trip"}</button>
+      </div>
+      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
+    </div>
+  );
+}
+
 /* ═══ TAB 2: IDEAS (Dual mode) ═══ */
 function Ideas({ userInfo, onAdd, trip, aiRecs, aiItinerary }) {
   const [mode, setMode] = useState("all"); // "all" or "curated"
