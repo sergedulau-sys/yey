@@ -360,6 +360,73 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
     );
   }
 
+  const renderCurated = () => (
+    <div style={{ padding: "16px 20px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        {ic.sparkle()}<span style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.accent }}>Your AI-Curated Itinerary</span>
+      </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {aiItinerary.map((day, i) => {
+          const count = day.experiences.length;
+          const dayCost = day.experiences.reduce((s, de) => { const found = EXP.find(x => x.id === de.id); return s + (found ? found.price : 0); }, 0);
+          return (
+            <button key={i} onClick={() => setSelectedDay(i)} style={{
+              flex: 1, padding: "14px 6px", borderRadius: 16, cursor: "pointer",
+              border: `2px solid ${C.accent}`, background: C.accentLight,
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+            }}>
+              <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.dayLabel}</span>
+              <span style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
+              <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec }}>Mar {12 + i}</span>
+              <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+                {Array.from({ length: count }).map((_, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: C.accent }} />)}
+              </div>
+              <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.accent, marginTop: 2 }}>{fmt(dayCost)}/pp</span>
+            </button>
+          );
+        })}
+      </div>
+      {aiItinerary.map((day, i) => {
+        const dayExps = day.experiences.map(de => { const found = EXP.find(x => x.id === de.id); return found ? { ...found, note: de.note, scheduledTime: de.time } : null; }).filter(Boolean);
+        return (
+          <div key={i} style={{ marginBottom: 16 }}>
+            <button onClick={() => setSelectedDay(i)} style={{ width: "100%", textAlign: "left", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: C.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{day.dayLabel}</span>
+                <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.day} — {dayExps.length} experiences</div>
+                <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dayExps.map(ex => ex.title).join(" → ")}</div>
+              </div>
+              <div style={{ color: C.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
+            </button>
+          </div>
+        );
+      })}
+      <div style={{ padding: "14px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total / person</span>
+        <span style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const found = EXP.find(x => x.id === de.id); return ds + (found ? found.price : 0); }, 0), 0))}</span>
+      </div>
+      <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>All recommended experiences</div>
+      {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
+    </div>
+  );
+
+  const renderAll = () => (
+    <div>
+      <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+        {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
+      </div>
+      <div style={{ padding: "8px 20px 20px" }}>
+        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experiences</div>
+        {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
+      </div>
+    </div>
+  );
+
+  const contentSection = (mode === "curated" && aiItinerary) ? renderCurated() : renderAll();
+
   return (
     <div style={{ height: "100%", overflowY: "auto", background: C.bg }}>
       <div style={{ padding: "20px 20px 0", background: C.surface }}>
@@ -378,76 +445,7 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
           </button>
         </div>
       </div>
-      {mode === "curated" && aiItinerary ? (
-          <div style={{ padding: "16px 20px" }}>
-            {/* Itinerary day boxes */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              {ic.sparkle()}<span style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.accent }}>Your AI-Curated Itinerary</span>
-            </div>
-            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-              {aiItinerary.map((day, i) => {
-                const count = day.experiences.length;
-                const dayCost = day.experiences.reduce((s, de) => { const e = EXP.find(x => x.id === de.id); return s + (e ? e.price : 0); }, 0);
-                return (
-                  <button key={i} onClick={() => setSelectedDay(i)} style={{
-                    flex: 1, padding: "14px 6px", borderRadius: 16, cursor: "pointer",
-                    border: `2px solid ${C.accent}`, background: C.accentLight,
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                  }}>
-                    <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.dayLabel}</span>
-                    <span style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
-                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec }}>Mar {12 + i}</span>
-                    <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
-                      {Array.from({ length: count }).map((_, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: C.accent }} />)}
-                    </div>
-                    <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.accent, marginTop: 2 }}>{fmt(dayCost)}/pp</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Day-by-day preview cards */}
-            {aiItinerary.map((day, i) => {
-              const dayExps = day.experiences.map(de => ({ ...EXP.find(e => e.id === de.id), note: de.note, scheduledTime: de.time })).filter(e => e.id);
-              return (
-                <div key={i} style={{ marginBottom: 16 }}>
-                  <button onClick={() => setSelectedDay(i)} style={{ width: "100%", textAlign: "left", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
-                    <div style={{ width: 48, height: 48, borderRadius: 12, background: C.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{day.dayLabel}</span>
-                      <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.day} — {dayExps.length} experiences</div>
-                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dayExps.map(e => e.title).join(" → ")}</div>
-                    </div>
-                    <div style={{ color: C.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
-                  </button>
-                </div>
-              );
-            })}
-
-            {/* Total */}
-            <div style={{ padding: "14px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total / person</span>
-              <span style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const e = EXP.find(x => x.id === de.id); return ds + (e ? e.price : 0); }, 0), 0))}</span>
-            </div>
-
-            {/* All recommended list */}
-            <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>All recommended experiences</div>
-            {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
-          </div>
-      ) : (
-        <div>
-          <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-            {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
-          </div>
-          <div style={{ padding: "8px 20px 20px" }}>
-            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experiences</div>
-            {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
-          </div>
-        </div>
-      )}
-      </div>
+      {contentSection}
     </div>
   );
 }
