@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
 
 /* ═══ HOST AVAILABILITY DATA MODEL ═══
    In production, each experience would have an `availability` array populated by hosts.
@@ -140,7 +140,7 @@ function CCard({ exp, onClick, onAdd, added, compact }) {
         <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2 }}>{exp.loc} · {exp.duration}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3 }}>{ic.star()}<span style={{ fontFamily: "var(--fb)", fontSize: 12, fontWeight: 600, color: C.text }}>{exp.rating}</span><span style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec }}>· {fmt(exp.price)}/pp</span></div>
       </div>
-      {onAdd && <button onClick={e => { e.stopPropagation(); onAdd(exp); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{added ? ic.chk() : ic.plus()}</button>}
+      <div onClick={e => { e.stopPropagation(); onClick && onClick(); }} style={{ width: 34, height: 34, borderRadius: "50%", border: "none", background: added ? C.successBg : C.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{added ? ic.chk() : ic.arrow()}</div>
     </div>
   );
 }
@@ -313,7 +313,7 @@ function Detail({ exp, onBack, onBookSlot, trip, tripDays, userInfo }) {
 
 /* ═══ TAB 2: IDEAS ═══ */
 function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerary }) {
-  const [mode, setMode] = useState("all");
+  const [mode, setMode] = useState(aiItinerary ? "curated" : "all");
   const [cat, setCat] = useState("all");
   const [det, setDet] = useState(null);
   const [selectedDay, setSelectedDay] = useState(null);
@@ -378,12 +378,78 @@ function Ideas({ userInfo, onAdd, onBookSlot, trip, tripDays, aiRecs, aiItinerar
           </button>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-        {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
-      </div>
-      <div style={{ padding: "8px 20px 20px" }}>
-        <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{(mode === "curated" ? curatedFiltered : allFiltered).length} experiences</div>
-        {(mode === "curated" ? curatedFiltered : allFiltered).map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} onAdd={onAdd} added={trip.some(t => t.id === exp.id)} />)}
+      {mode === "curated" && aiItinerary ? (
+        <>
+          {/* Category pills */}
+          <div style={{ padding: "16px 20px" }}>
+            {/* Itinerary day boxes */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              {ic.sparkle()}<span style={{ fontFamily: "var(--fb)", fontSize: 13, fontWeight: 600, color: C.accent }}>Your AI-Curated Itinerary</span>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+              {aiItinerary.map((day, i) => {
+                const count = day.experiences.length;
+                const dayCost = day.experiences.reduce((s, de) => { const e = EXP.find(x => x.id === de.id); return s + (e ? e.price : 0); }, 0);
+                return (
+                  <button key={i} onClick={() => setSelectedDay(i)} style={{
+                    flex: 1, padding: "14px 6px", borderRadius: 16, cursor: "pointer",
+                    border: `2px solid ${C.accent}`, background: C.accentLight,
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                  }}>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.textSec, textTransform: "uppercase" }}>{day.dayLabel}</span>
+                    <span style={{ fontFamily: "var(--fh)", fontSize: 24, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, color: C.textSec }}>Mar {12 + i}</span>
+                    <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+                      {Array.from({ length: count }).map((_, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: C.accent }} />)}
+                    </div>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 10, fontWeight: 600, color: C.accent, marginTop: 2 }}>{fmt(dayCost)}/pp</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Day-by-day preview cards */}
+            {aiItinerary.map((day, i) => {
+              const dayExps = day.experiences.map(de => ({ ...EXP.find(e => e.id === de.id), note: de.note, scheduledTime: de.time })).filter(e => e.id);
+              return (
+                <div key={i} style={{ marginBottom: 16 }}>
+                  <button onClick={() => setSelectedDay(i)} style={{ width: "100%", textAlign: "left", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: C.accentLight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: C.accent, textTransform: "uppercase" }}>{day.dayLabel}</span>
+                      <span style={{ fontFamily: "var(--fh)", fontSize: 18, fontWeight: 700, color: C.accent, lineHeight: 1 }}>{day.day}</span>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 14, fontWeight: 600, color: C.text }}>Day {day.day} — {dayExps.length} experiences</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dayExps.map(e => e.title).join(" → ")}</div>
+                    </div>
+                    <div style={{ color: C.textTer, flexShrink: 0 }}>{ic.arrow()}</div>
+                  </button>
+                </div>
+              );
+            })}
+
+            {/* Total */}
+            <div style={{ padding: "14px 16px", background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: C.textSec }}>Estimated total / person</span>
+              <span style={{ fontFamily: "var(--fh)", fontSize: 20, fontWeight: 700, color: C.text }}>{fmt(aiItinerary.reduce((s, day) => s + day.experiences.reduce((ds, de) => { const e = EXP.find(x => x.id === de.id); return ds + (e ? e.price : 0); }, 0), 0))}</span>
+            </div>
+
+            {/* All recommended list */}
+            <div style={{ fontFamily: "var(--fb)", fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>All recommended experiences</div>
+            {curatedFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto", scrollbarWidth: "none", background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+            {CATS.map(c => <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", border: cat === c.id ? `1.5px solid ${C.accent}` : `1.5px solid ${C.border}`, background: cat === c.id ? C.accentLight : C.surface, color: cat === c.id ? C.accent : C.textSec, fontFamily: "var(--fb)", fontSize: 12, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><span style={{ fontSize: 14 }}>{c.i}</span>{c.l}</button>)}
+          </div>
+          <div style={{ padding: "8px 20px 20px" }}>
+            <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: C.textSec, marginBottom: 8, marginTop: 8 }}>{allFiltered.length} experiences</div>
+            {allFiltered.map(exp => <CCard key={exp.id} exp={exp} compact onClick={() => setDet(exp)} added={trip.some(t => t.id === exp.id)} />)}
+          </div>
+        </>
+      )}
       </div>
     </div>
   );
@@ -803,8 +869,25 @@ export default function App() {
   const [trip, setTrip] = useState([]);
   const [tripDays, setTripDays] = useState({});
   const [userInfo, setUserInfo] = useState({ cities:[],interests:[],dates:null,groupSize:null,groupType:null,totalBudget:null,numDays:null,pace:null });
-  const [aiRecs, setAiRecs] = useState([]);
-  const [aiItinerary, setAiItinerary] = useState(null);
+  // Pre-built AI curated itinerary for Miami March 12-14
+  const defaultItinerary = [
+    { day: 1, date: "2026-03-12", dayLabel: "Thu", experiences: [
+      { id: 15, time: "9:00 AM", note: "Start the trip with some adrenaline on the water" },
+      { id: 5, time: "5:00 PM", note: "Hit South Beach for food and cocktails as the sun sets" },
+    ]},
+    { day: 2, date: "2026-03-13", dayLabel: "Fri", experiences: [
+      { id: 4, time: "6:00 AM", note: "Early morning deep sea fishing — best bite is at dawn" },
+      { id: 8, time: "2:00 PM", note: "Explore Wynwood's murals and galleries after lunch" },
+      { id: 6, time: "6:00 PM", note: "End the day with a private sunset yacht cruise" },
+    ]},
+    { day: 3, date: "2026-03-14", dayLabel: "Sat", experiences: [
+      { id: 7, time: "8:00 AM", note: "Everglades adventure — see gators up close" },
+      { id: 9, time: "2:00 PM", note: "Wind down the trip with a luxury spa afternoon" },
+    ]},
+  ];
+  const defaultRecs = defaultItinerary.flatMap(d => d.experiences.map(e => e.id)).map(id => EXP.find(e => e.id === id)).filter(Boolean);
+  const [aiRecs, setAiRecs] = useState(defaultRecs);
+  const [aiItinerary, setAiItinerary] = useState(defaultItinerary);
 
   const add = e => { if (!trip.some(t => t.id === e.id)) setTrip(p => [...p, e]); };
   const rm = id => { setTrip(p => p.filter(t => t.id !== id)); setTripDays(p => { const n={...p}; delete n[id]; return n; }); };
