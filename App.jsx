@@ -163,110 +163,407 @@ function parseAIResponse(raw) {
 }
 
 /* ═══ TAB 1: AI CHAT ═══ */
+
+/* ═══ LOCAL CONVERSATION ENGINE (fallback) ═══ */
+function localReply(text, tripState) {
+  const t = text.toLowerCase().trim();
+  const s = { ...tripState };
+  let understood = [];
+
+  // Parse everything we can from this message
+  const cityMap = {miami:"miami","south beach":"miami",tokyo:"tokyo",japan:"tokyo",italy:"amalfi",amalfi:"amalfi",bali:"bali",greece:"santorini",santorini:"santorini",napa:"napa",france:"epernay",paris:"epernay",scotland:"standrews"};
+  for (const [k,v] of Object.entries(cityMap)) { if (t.includes(k) && !s.destination) { s.destination = v; understood.push(v.charAt(0).toUpperCase()+v.slice(1)); break; } }
+
+  const sizeM = t.match(/(\d+)\s*(people|persons|of us|guys|girls|friends|guests|boys|men|women|pax)/);
+  if (sizeM) { s.groupSize = parseInt(sizeM[1]); understood.push(`${s.groupSize} guests`); }
+
+  const types = [[/boys?\s*trip|guys?\s*trip|bachelor/,"boys"],[/girls?\s*trip|bachelorette|ladies/,"girls"],[/family|kids|children/,"family"],[/couple|honeymoon|romantic|anniversary/,"couple"],[/\bsolo\b|just me|alone/,"solo"],[/business|corporate|team/,"business"]];
+  for (const [re,type] of types) { if (t.match(re) && !s.groupType) { s.groupType = type; understood.push({boys:"boys trip",girls:"girls trip",family:"family trip",couple:"couple's getaway",solo:"solo trip",business:"business trip"}[type]); break; } }
+
+  const dayM = t.match(/(\d+)\s*(days?|nights?)/);
+  if (dayM) { s.numDays = parseInt(dayM[1]); understood.push(`${s.numDays} days`); }
+  if (!s.numDays && t.includes("long weekend")) { s.numDays = 3; understood.push("3 days"); }
+  else if (!s.numDays && t.includes("weekend")) { s.numDays = 2; understood.push("weekend"); }
+  if (!s.numDays && t.match(/\ba week\b/)) { s.numDays = 7; understood.push("a week"); }
+
+  const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  for (const m of months) { const re = new RegExp(m+"\\s*(\\d{1,2})?"); const match = t.match(re); if (match && !s.dates) { s.dates = `${m.charAt(0).toUpperCase()+m.slice(1)}${match[1]?" "+match[1]:""}`; understood.push(s.dates); break; } }
+
+  const budgetPats = [/\$\s*([\d,]+)\s*k/i, /\$\s*([\d,]+)/, /([\d,]+)\s*k\b/i, /([\d,]+)\s*grand/i];
+  for (const pat of budgetPats) { const m = t.match(pat); if (m && !s.totalBudget) { let v = parseInt(m[1].replace(/,/g,"")); if(t.includes("k")&&v<1000)v*=1000; if(v>=200){s.totalBudget=v; understood.push("$"+v.toLocaleString()+" budget"); break;} } }
+
+  const intMap = {food:["food","eat","restaurant","dining","culinary","chef","dinner","brunch","foodie"],water:["boat","yacht","sailing","jet ski","water","ocean","cruise","fishing","snorkel","swim"],adventure:["adventure","thrill","explore","airboat","helicopter","safari","adrenaline"],culture:["art","culture","museum","history","gallery","street art"],wellness:["spa","wellness","relax","massage","yoga"],sport:["golf","sport","tennis"],nightlife:["nightlife","bar","club","cocktail","drink","party","drinks"],wine:["wine","champagne","tasting","vineyard"],nature:["nature","wildlife","everglades","park","hike","outdoor"]};
+  const newInterests = [];
+  Object.entries(intMap).forEach(([cat,words]) => { words.forEach(w => { if(t.includes(w) && !(s.interests||[]).includes(cat)) newInterests.push(cat); }); });
+  if (t.includes("surprise me")||t.includes("everything")||t.includes("a bit of everything")) newInterests.push(...["food","water","adventure","culture"].filter(i => !(s.interests||[]).includes(i) && !newInterests.includes(i)));
+  if (newInterests.length) { s.interests = [...(s.interests||[]), ...newInterests]; understood.push(newInterests.join(", ")); }
+
+  // Context-aware: if nothing parsed but we know what we last asked
+  if (understood.length === 0) {
+    const numM = t.match(/(\d+)/);
+    if (numM) {
+      const n = parseInt(numM[1]);
+      if (!s.groupSize && n >= 1 && n <= 30) { s.groupSize = n; understood.push(`${n} guests`); }
+      else if (!s.numDays && n >= 1 && n <= 14) { s.numDays = n; understood.push(`${n} days`); }
+      else if (!s.totalBudget) { let v = n; if(v<=50) v*=1000; if(v>=200){s.totalBudget=v; understood.push("$"+v.toLocaleString()+" budget");} }
+    }
+  }
+
+  // Figure out what's missing
+  const missing = [];
+  if (!s.destination) missing.push("destination");
+  if (!s.dates && !s.numDays) missing.push("dates");
+  if (!s.numDays) missing.push("days");
+  if (!s.groupSize) missing.push("groupSize");
+  if (!s.groupType) missing.push("groupType");
+  if (!s.totalBudget) missing.push("budget");
+  if (!(s.interests||[]).length) missing.push("interests");
+
+  // Build response
+  let reply = "";
+  const ack = understood.length > 0 ? understood.join(", ") : null;
+
+  // Can we build itinerary?
+  if (s.destination && (s.numDays||s.dates) && s.groupSize && (s.interests||[]).length) {
+    const city = s.destination;
+    const days = s.numDays || 4;
+    const gs = s.groupSize;
+    const budget = s.totalBudget || 99999;
+    const groupLabel = s.groupType ? {boys:"boys trip",girls:"girls trip",family:"family vacation",couple:"couple's getaway",solo:"solo adventure",business:"corporate retreat"}[s.groupType]||"trip" : "trip";
+    const cityName = city.charAt(0).toUpperCase()+city.slice(1);
+
+    const matching = EXP.filter(e => e.city===city||e.region.includes(city))
+      .map(e => { let score=0; (s.interests||[]).forEach(i=>{e.tags.forEach(tag=>{if(tag.includes(i)||i.includes(tag))score+=3;});}); if(gs<=(e.maxGuests||99))score+=2; score+=e.rating*0.5; return {...e,score}; })
+      .filter(e=>e.score>0).sort((a,b)=>b.score-a.score);
+
+    const itinerary=[]; const usedIds=new Set(); let cost=0;
+    const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    for (let d=0;d<days;d++) {
+      const dayExps=[]; const dayLabel=dayNames[(4+d)%7];
+      const slots=[{time:"8:00 AM"},{time:"12:00 PM"},{time:"4:00 PM"},{time:"7:00 PM"}];
+      for (const slot of slots) {
+        if(dayExps.length>=2)break;
+        const c=matching.find(e=>!usedIds.has(e.id)&&cost+(e.price*gs)<=budget);
+        if(c){const notes={yacht:["Perfect way to see the coastline","Nothing beats the water"],dining:["The food here is exceptional","Best kept secret in town"],fishing:["Early start but worth it","Captain knows the spots"],adventure:["Get the adrenaline going","Everyone talks about this one"],cultural:["A different pace — enriching","See the city like a local"],spa:["You'll need this after the action","World-class relaxation"],golf:["Bucket list course","Bring your A-game"],wine:["Tastings on another level","Perfect afternoon"]};const note=(notes[c.cat]||["Great experience"])[d%(notes[c.cat]||[""]).length];dayExps.push({id:c.id,time:slot.time,note});usedIds.add(c.id);cost+=c.price*gs;}
+      }
+      if(dayExps.length) itinerary.push({day:d+1,date:`2026-03-${String(15+d).padStart(2,"0")}`,dayLabel,experiences:dayExps});
+    }
+
+    const budgetNote = s.totalBudget ? (cost<=s.totalBudget?" Right within your budget.":" I stretched a bit to get you the best — swap any out.") : "";
+    reply = `Love it — your ${days}-day ${groupLabel} to ${cityName} for ${gs} is ready. ${fmt(cost)} total.${budgetNote} Switching you over to your itinerary now.`;
+
+    const infoTag = `|||INFO:${JSON.stringify(s)}|||`;
+    const recsTag = `|||RECS:[${[...usedIds].join(",")}]|||`;
+    const itinTag = `|||ITINERARY:${JSON.stringify(itinerary)}|||`;
+    return { reply: reply + " " + infoTag + " " + recsTag + " " + itinTag + " |||NAV:ideas|||", newState: s };
+  }
+
+  // Not ready yet — ask for what's missing
+  const questions = {
+    destination: ["Where are you thinking? I've got incredible experiences in Miami, Tokyo, Amalfi, Napa, Bali, Santorini, and more.", "What destination are you dreaming about?"],
+    dates: ["When are you thinking of going?", "What dates work for you?"],
+    days: ["How many days are you thinking?", "How long is the trip?"],
+    groupSize: ["How many of you are going?", "How big is the group?"],
+    groupType: ["What kind of trip is it — boys trip, girls trip, family, couple's getaway?", "Is this a boys trip, family vacation, couple's getaway...?"],
+    budget: ["What's your total experience budget for the whole group?", "Roughly how much are you looking to spend on experiences total?"],
+    interests: ["What are you into — water sports, food, nightlife, adventure, culture, wellness?", "What kind of experiences sound fun — boats, food tours, nightlife, adventure?"],
+  };
+
+  if (!s.destination) {
+    reply = ack ? `Nice — ${ack}. But first, where are you headed?` : (questions.destination[Math.floor(Math.random()*2)]);
+  } else if (missing.length > 0) {
+    const next = missing.find(m => m !== "destination");
+    const q = questions[next] ? questions[next][Math.floor(Math.random()*2)] : "Tell me more about what you're looking for.";
+    if (ack) {
+      reply = `${ack} — noted. ${q}`;
+    } else {
+      // They said something we didn't understand — be graceful
+      reply = `Got it! ${q}`;
+    }
+  }
+
+  const infoTag = `|||INFO:${JSON.stringify(s)}|||`;
+  return { reply: reply + " " + infoTag, newState: s };
+}
+
+/* ═══ PERSISTENT MEMORY LAYER ═══
+   Architecture:
+   1. sessionId — unique per conversation, stored in storage
+   2. messageHistory — full chat log persisted to storage, restored on refresh
+   3. userFacts — long-term extracted facts (destination, group size, etc.) persisted separately
+   4. Every API call sends: system prompt + userFacts summary + last N messages (token window)
+   5. Local fallback reads from same persistent state — never loses context
+*/
+
+const SESSION_KEY = "eleve-session";
+const HISTORY_KEY = "eleve-history";
+const FACTS_KEY = "eleve-facts";
+const MSGS_KEY = "eleve-msgs";
+const MAX_HISTORY_MESSAGES = 30; // sliding window for token safety (~800 tokens per exchange)
+
+function generateSessionId() {
+  return "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+// Build the message array sent to Claude — system facts injected as first user context
+function buildAPIMessages(history, userFacts) {
+  // Trim to last N messages to stay within token limits
+  const trimmed = history.length > MAX_HISTORY_MESSAGES
+    ? history.slice(-MAX_HISTORY_MESSAGES)
+    : [...history];
+
+  // If we have extracted facts, prepend a context summary so Claude never forgets
+  if (Object.keys(userFacts).length > 0) {
+    const factSummary = Object.entries(userFacts)
+      .filter(([_, v]) => v !== null && v !== undefined)
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+      .join("\n");
+
+    // Inject as a system-level context block at the start
+    // This ensures even if old messages are trimmed, facts persist
+    if (factSummary && trimmed.length > 0 && trimmed[0].role === "user") {
+      trimmed[0] = {
+        role: "user",
+        content: `[Context — what I've told you so far: ${factSummary}]\n\n${trimmed[0].content}`,
+      };
+    }
+  }
+
+  return trimmed;
+}
+
+/* ═══ TAB 1: AI CHAT ═══ */
 function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary, setTab }) {
-  const [msgs, setMsgs] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [msgs, setMsgs] = useState([]);           // UI messages (what user sees)
+  const [history, setHistory] = useState([]);       // API message history (role/content pairs)
+  const [userFacts, setUserFacts] = useState({});   // Long-term extracted facts
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [det, setDet] = useState(null);
-  const [init, setInit] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [tripState, setTripState] = useState({});
+  const [apiWorks, setApiWorks] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
   const end = useRef(null);
   const taRef = useRef(null);
 
-  // Initial greeting from Claude
+  // ─── STEP 1: Restore persisted session on mount ───
   useEffect(() => {
-    if (init) return; setInit(true);
-    setThinking(true);
+    if (loaded) return;
     (async () => {
-      const initMsg = [{ role: "user", content: "Hi, I'd like to plan a trip." }];
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 400, system: CONCIERGE_PROMPT, messages: initMsg }),
-        });
-        if (!res.ok) throw new Error("API " + res.status);
-        const data = await res.json();
-        const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
-        if (!raw) throw new Error("Empty response");
-        const { displayText } = parseAIResponse(raw);
-        setHistory([...initMsg, { role: "assistant", content: raw }]);
-        setThinking(false);
-        setMsgs([{ f: "bot", t: displayText || "Welcome to Élevé! Where are you headed?" }]);
+        // Try to restore existing session
+        const savedSession = await window.storage.get(SESSION_KEY);
+        const savedHistory = await window.storage.get(HISTORY_KEY);
+        const savedFacts = await window.storage.get(FACTS_KEY);
+        const savedMsgs = await window.storage.get(MSGS_KEY);
+
+        if (savedSession?.value && savedHistory?.value && savedMsgs?.value) {
+          // Restore everything
+          setSessionId(savedSession.value);
+          setHistory(JSON.parse(savedHistory.value));
+          setMsgs(JSON.parse(savedMsgs.value));
+          if (savedFacts?.value) {
+            const facts = JSON.parse(savedFacts.value);
+            setUserFacts(facts);
+            setTripState(facts);
+            // Sync to parent userInfo
+            setUserInfo(prev => {
+              const n = { ...prev };
+              if (facts.destination) n.cities = [facts.destination];
+              if (facts.numDays) n.numDays = facts.numDays;
+              if (facts.groupSize) n.groupSize = facts.groupSize;
+              if (facts.groupType) n.groupType = facts.groupType;
+              if (facts.totalBudget) n.totalBudget = facts.totalBudget;
+              if (facts.dates) n.dates = facts.dates;
+              if (facts.interests) n.interests = facts.interests;
+              return n;
+            });
+          }
+          setLoaded(true);
+          return;
+        }
       } catch(e) {
-        setHistory([...initMsg, { role: "assistant", content: "Welcome to Élevé — I'll help you plan something unforgettable. Where are you headed?" }]);
-        setThinking(false);
-        setMsgs([{ f: "bot", t: "Welcome to Élevé — I'll help you plan something unforgettable. Where are you headed?" }]);
+        // Storage not available or empty — fresh start
       }
+
+      // No saved session — create new one
+      const newId = generateSessionId();
+      setSessionId(newId);
+      try { await window.storage.set(SESSION_KEY, newId); } catch(e) {}
+
+      // Show initial greeting
+      const greeting = "Welcome to Élevé — I'll craft you the perfect trip. Where are you headed?";
+      const initHistory = [
+        { role: "user", content: "Hi, I'd like to plan a trip." },
+        { role: "assistant", content: greeting }
+      ];
+      setHistory(initHistory);
+      setMsgs([{ f: "bot", t: greeting }]);
+      persist(initHistory, [{ f: "bot", t: greeting }], {});
+      setLoaded(true);
     })();
-  }, [init]);
+  }, [loaded]);
+
+  // ─── STEP 2: Persist to storage after every change ───
+  const persist = async (h, m, facts) => {
+    try {
+      await window.storage.set(HISTORY_KEY, JSON.stringify(h));
+      await window.storage.set(MSGS_KEY, JSON.stringify(m));
+      await window.storage.set(FACTS_KEY, JSON.stringify(facts));
+    } catch(e) { /* storage unavailable — session-only memory still works */ }
+  };
 
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, thinking]);
 
+  // ─── STEP 3: Extract facts from AI response and merge ───
+  const updateFacts = (infoUpdate) => {
+    if (!infoUpdate) return;
+    setUserFacts(prev => {
+      const n = { ...prev };
+      if (infoUpdate.destination) n.destination = infoUpdate.destination;
+      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
+      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
+      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
+      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
+      if (infoUpdate.dates) n.dates = infoUpdate.dates;
+      if (infoUpdate.interests) n.interests = infoUpdate.interests;
+      return n;
+    });
+    setUserInfo(prev => {
+      const n = { ...prev };
+      if (infoUpdate.destination) n.cities = [infoUpdate.destination];
+      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
+      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
+      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
+      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
+      if (infoUpdate.dates) n.dates = infoUpdate.dates;
+      if (infoUpdate.interests) n.interests = infoUpdate.interests;
+      return n;
+    });
+    setTripState(prev => {
+      const n = { ...prev };
+      if (infoUpdate.destination) n.destination = infoUpdate.destination;
+      if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
+      if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
+      if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
+      if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
+      if (infoUpdate.dates) n.dates = infoUpdate.dates;
+      if (infoUpdate.interests) n.interests = infoUpdate.interests;
+      return n;
+    });
+  };
+
+  // ─── STEP 4: Process AI response (shared by API + local) ───
+  const processResponse = (raw, newHistory, newMsgs) => {
+    const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
+
+    updateFacts(infoUpdate);
+
+    // Get latest facts for persistence
+    const latestFacts = { ...userFacts };
+    if (infoUpdate) {
+      if (infoUpdate.destination) latestFacts.destination = infoUpdate.destination;
+      if (infoUpdate.numDays) latestFacts.numDays = infoUpdate.numDays;
+      if (infoUpdate.groupSize) latestFacts.groupSize = infoUpdate.groupSize;
+      if (infoUpdate.groupType) latestFacts.groupType = infoUpdate.groupType;
+      if (infoUpdate.totalBudget) latestFacts.totalBudget = infoUpdate.totalBudget;
+      if (infoUpdate.dates) latestFacts.dates = infoUpdate.dates;
+      if (infoUpdate.interests) latestFacts.interests = infoUpdate.interests;
+    }
+
+    if (recIds.length > 0) {
+      const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
+      setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...recs.filter(r => !ex.includes(r.id))]; });
+      setTimeout(() => {
+        setMsgs(p => {
+          const updated = [...p, { f: "bot", t: "__RECS__", recs }];
+          persist(newHistory, updated, latestFacts);
+          return updated;
+        });
+      }, 400);
+    }
+
+    if (itinerary) {
+      setAiItinerary(itinerary);
+      const itinExps = itinerary.flatMap(d => d.experiences.map(e => e.id)).map(id => EXP.find(e => e.id === id)).filter(Boolean);
+      setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...itinExps.filter(r => !ex.includes(r.id))]; });
+    }
+
+    const finalMsgs = [...newMsgs, { f: "bot", t: displayText }];
+    setHistory(newHistory);
+    setMsgs(finalMsgs);
+    setThinking(false);
+
+    // Persist everything
+    persist(newHistory, finalMsgs, latestFacts);
+
+    if (navTo && setTab) setTimeout(() => setTab(navTo), 2000);
+  };
+
+  // ─── STEP 5: Send message ───
   const send = async () => {
     const text = input.trim();
     if (!text || thinking) return;
     setInput(""); if (taRef.current) taRef.current.style.height = "auto";
-    setMsgs(p => [...p, { f: "user", t: text }]);
+
+    const newMsgs = [...msgs, { f: "user", t: text }];
+    setMsgs(newMsgs);
     setThinking(true);
 
-    const newHistory = [...history, { role: "user", content: text }];
+    const userMsg = { role: "user", content: text };
+    const newHistory = [...history, userMsg];
 
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 800, system: CONCIERGE_PROMPT, messages: newHistory }),
-      });
-      if (!res.ok) throw new Error("API " + res.status);
-      const data = await res.json();
-      const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
-      if (!raw) throw new Error("Empty response");
-      const { displayText, recIds, infoUpdate, itinerary, navTo } = parseAIResponse(raw);
-
-      setHistory([...newHistory, { role: "assistant", content: raw }]);
-
-      // Update user info from Claude's structured tags
-      if (infoUpdate) {
-        setUserInfo(prev => {
-          const n = { ...prev };
-          if (infoUpdate.destination) n.cities = [infoUpdate.destination];
-          if (infoUpdate.numDays) n.numDays = infoUpdate.numDays;
-          if (infoUpdate.groupSize) n.groupSize = infoUpdate.groupSize;
-          if (infoUpdate.groupType) n.groupType = infoUpdate.groupType;
-          if (infoUpdate.totalBudget) n.totalBudget = infoUpdate.totalBudget;
-          if (infoUpdate.dates) n.dates = infoUpdate.dates;
-          if (infoUpdate.interests) n.interests = infoUpdate.interests;
-          return n;
+    // ─── API PATH: send full history with facts context ───
+    if (apiWorks !== false) {
+      try {
+        const apiMessages = buildAPIMessages(newHistory, userFacts);
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 800,
+            system: CONCIERGE_PROMPT,
+            messages: apiMessages,
+          }),
         });
+        if (!res.ok) throw new Error("nope");
+        const data = await res.json();
+        const raw = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+        if (!raw) throw new Error("empty");
+
+        const fullHistory = [...newHistory, { role: "assistant", content: raw }];
+        setApiWorks(true);
+        processResponse(raw, fullHistory, newMsgs);
+        return;
+      } catch(e) {
+        setApiWorks(false);
       }
-
-      // Store recommendations
-      if (recIds.length > 0) {
-        const recs = recIds.map(id => EXP.find(e => e.id === id)).filter(Boolean);
-        setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...recs.filter(r => !ex.includes(r.id))]; });
-        setTimeout(() => setMsgs(p => [...p, { f: "bot", t: "__RECS__", recs }]), 400);
-      }
-
-      // Store itinerary
-      if (itinerary) {
-        setAiItinerary(itinerary);
-        const itinExps = itinerary.flatMap(d => d.experiences.map(e => e.id)).map(id => EXP.find(e => e.id === id)).filter(Boolean);
-        setAiRecs(prev => { const ex = prev.map(e => e.id); return [...prev, ...itinExps.filter(r => !ex.includes(r.id))]; });
-      }
-
-      setThinking(false);
-      setMsgs(p => [...p, { f: "bot", t: displayText || "I'd love to help — tell me more about what you're looking for." }]);
-
-      // Auto-navigate
-      if (navTo && setTab) setTimeout(() => setTab(navTo), 2000);
-
-    } catch(e) {
-      // Network error — let user know gracefully
-      setHistory(newHistory); // keep their message in history for retry
-      setThinking(false);
-      setMsgs(p => [...p, { f: "bot", t: "Having a moment of trouble connecting — try sending that again." }]);
     }
+
+    // ─── LOCAL FALLBACK: uses same persistent tripState ───
+    const { reply, newState } = localReply(text, tripState);
+    setTripState(newState);
+    const fullHistory = [...newHistory, { role: "assistant", content: reply }];
+    processResponse(reply, fullHistory, newMsgs);
+  };
+
+  // ─── Reset conversation ───
+  const resetChat = async () => {
+    try {
+      await window.storage.delete(SESSION_KEY);
+      await window.storage.delete(HISTORY_KEY);
+      await window.storage.delete(FACTS_KEY);
+      await window.storage.delete(MSGS_KEY);
+    } catch(e) {}
+    setSessionId(generateSessionId());
+    setHistory([]);
+    setMsgs([]);
+    setUserFacts({});
+    setTripState({});
+    setLoaded(false);
+    setApiWorks(null);
   };
 
   if (det) return <Detail exp={det} onBack={() => setDet(null)} onAdd={onAdd} added={trip.some(t => t.id === det.id)} userInfo={userInfo} />;
@@ -278,6 +575,9 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
           <span style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: "#fff" }}>É</span>
         </div>
         <div style={{ flex: 1 }}><div style={{ fontFamily: "var(--fh)", fontSize: 16, fontWeight: 700, color: C.text }}>Élevé</div></div>
+        <button onClick={resetChat} title="New conversation" style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textTer} strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: C.success }} /><span style={{ fontFamily: "var(--fb)", fontSize: 11, color: C.textSec }}>Online</span></div>
       </div>
 
@@ -332,6 +632,7 @@ function AIChat({ userInfo, setUserInfo, trip, onAdd, setAiRecs, setAiItinerary,
     </div>
   );
 }
+
 
 /* ═══ TAB 1: AI CHAT ═══ */
 function CCard({ exp, onClick, onAdd, added, compact }) {
